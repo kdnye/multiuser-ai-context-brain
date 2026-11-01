@@ -29,14 +29,22 @@ pay data; the scrubber is a backstop, not the control.
 }
 ```
 
-`session.summary` is required; everything else is optional.
+`session.summary` is required; everything else is optional. The payload is checked before anything is written:
+- **Refused** (nothing is written): a value of the wrong type, an array that is not a list of objects or has more
+  than 200 items, an item without its identifying field (`name` for projects, future needs and maintenance, `title`
+  for notes, `task` for tasks, `capture` for captures), and a `session.date` that is not `YYYY-MM-DD`.
+- **Reported** in `ignored_fields`: keys the wiki does not use (a misspelled `bdy`), so nothing disappears silently.
+  `repos` and `session.store_raw_json` are part of the canonical JSON and accepted.
+
+The ingest is **all or nothing**: pages are staged and written only if every page succeeds, so a late failure (for
+example a note over the 200 KB page limit) leaves the silo unchanged.
 
 ## What the server does with it
 | Payload key | Result |
 |---|---|
 | `session` | A new page `sessions/<date>-<concerning>` (a second session that day gets `-2`). Its `scope` comes from the project it concerns. |
 | `projects` | A new `projects/<slug>` page for each name not already present (case-insensitive). Existing projects are not touched. |
-| `notes` | A new `notes/<slug>` page, or an `## Update <date>` section appended to the existing note with that title. |
+| `notes` | A new `notes/<slug>` page, or an `## Update <date>` section appended to the existing note with that title. A different title that happens to share the slug ("C++" and "C#") gets its own page (`notes/c-2`). |
 | `tasks` | A record `tasks/<slug>` per task, deduped by title: an existing task keeps its values and only gains missing fields (plus an update section for `notes`). |
 | `future_needs` | A record `future-needs/<slug>`, deduped the same way. |
 | `maintenance`, `captures` | Listed as follow-ups on the session page. |
@@ -58,9 +66,9 @@ An unknown value is dropped and reported in `dropped_values`, never invented.
 ```json
 {"silo": "users/<you>", "session": "sessions/2026-11-01-quotes-rollout",
  "created": ["..."], "updated": ["..."], "follow_ups": {"tasks": 1, "future_needs": 1, "maintenance": 1, "captures": 1},
- "scrubbed": {}, "dropped_values": [], "pages_to_review": [{"path": "...", "title": "...", "because": "..."}]}
+ "scrubbed": {}, "dropped_values": [], "ignored_fields": [], "pages_to_review": [{"path": "...", "title": "...", "because": "..."}]}
 ```
-`pages_to_review` lists existing pages this session probably changes. Read each one and update it (`wiki_append`, or
+`scrubbed` totals what the scrubber removed across every page this ingest wrote. `pages_to_review` lists existing pages this session probably changes. Read each one and update it (`wiki_append`, or
 `wiki_write` with `expected_revision`), and say so when the new information contradicts an older page. This step is
 what turns a pile of session logs into a maintained wiki.
 

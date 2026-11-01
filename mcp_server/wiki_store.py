@@ -429,45 +429,53 @@ class Wiki:
         p, name = self._page(page)
         if p in ("index", "log") or self._generated(p):
             raise WikiError(f"{p} is maintained automatically; append to the underlying page instead")
-        old = self.store.read(name)
-        if old is None:
-            raise WikiError(f"no such page: {p} (use wiki_write to create it)")
         if not (summary or "").strip():
             raise WikiError("a one-line summary of the change is required (it goes in the log)")
         if not (text or "").strip():
             raise WikiError("nothing to append")
-        title = (heading or "Update").strip().lstrip("#").strip()[:120]
-        body = FRONTMATTER.sub("", old, count=1).rstrip() + f"\n\n## {title} ({self._today()})\n\n{text.strip()}\n"
-        if len(body.encode("utf-8")) > MAX_BYTES:
-            raise WikiError(f"page would exceed {MAX_BYTES} bytes; split it into a linked page instead")
-        with self._lock:
+        title = " ".join((heading or "Update").strip().lstrip("#").split())[:120]
+        with self._lock:      # read, build and store as one step: two concurrent appends must not lose either
+            old = self.store.read(name)
+            if old is None:
+                raise WikiError(f"no such page: {p} (use wiki_write to create it)")
+            body = FRONTMATTER.sub("", old, count=1).rstrip() + f"\n\n## {title} ({self._today()})\n\n{text.strip()}\n"
+            if len(body.encode("utf-8")) > MAX_BYTES:
+                raise WikiError(f"page would exceed {MAX_BYTES} bytes; split it into a linked page instead")
             return self._store(p, name, parse_frontmatter(old), body, summary)
 
     def update_record(self, page: str, status: str | None = None, priority: str | None = None, due: str | None = None,
                       horizon: str | None = None, note: str | None = None) -> dict:
-        """Change status, priority, due or horizon on a task or future need, adding a dated history line."""
+        """Change status, priority or due on a task, or status or horizon on a future need, adding a dated history line.
+        A field that belongs to the other record type is refused, not silently stored."""
         p, name = self._page(page)
-        old = self.store.read(name)
-        if old is None:
-            raise WikiError(f"no such page: {p}")
-        fm = parse_frontmatter(old)
-        if fm.get("type") not in (records.TASK_TYPE, records.NEED_TYPE):
-            raise WikiError(f"{p} is not a task or future need")
-        changes, new = [], dict(fm)
-        for key, value in (("status", status), ("priority", priority), ("due", due), ("horizon", horizon)):
-            if value is not None and value != fm.get(key):
-                changes.append(f"{key}: {fm.get(key) or '(none)'} -> {value or '(cleared)'}")
-                new[key] = value
-        if not changes and not (note or "").strip():
-            raise WikiError("nothing to change")
-        try:
-            new, _ = records.validate(new, strict=True)
-        except records.RecordError as exc:
-            raise WikiError(str(exc)) from None
-        body = FRONTMATTER.sub("", old, count=1).rstrip()
-        line = f"- {self._today()}: " + ("; ".join(changes) if changes else "note") + (f". {note.strip()}" if (note or "").strip() else "")
-        body += ("\n" if "\n## History\n" in body else "\n\n## History\n\n") + line + "\n"
-        with self._lock:
+        requested = {k: v for k, v in (("status", status), ("priority", priority), ("due", due), ("horizon", horizon)) if v is not None}
+        with self._lock:      # read, change and store as one step, like append
+            old = self.store.read(name)
+            if old is None:
+                raise WikiError(f"no such page: {p}")
+            fm = parse_frontmatter(old)
+            rtype = fm.get("type")
+            if rtype not in (records.TASK_TYPE, records.NEED_TYPE):
+                raise WikiError(f"{p} is not a task or future need")
+            allowed = records.UPDATABLE[rtype]
+            wrong = sorted(set(requested) - set(allowed))
+            if wrong:
+                raise WikiError(f"a {rtype.replace('_', ' ')} has no {', '.join(wrong)}; it takes {', '.join(allowed)}")
+            changes, new = [], dict(fm)
+            for key, value in requested.items():
+                if value != fm.get(key):
+                    changes.append(f"{key}: {fm.get(key) or '(none)'} -> {value or '(cleared)'}")
+                    new[key] = value
+            if not changes and not (note or "").strip():
+                raise WikiError("nothing to change")
+            try:
+                new, _ = records.validate(new, strict=True)
+            except records.RecordError as exc:
+                raise WikiError(str(exc)) from None
+            body = FRONTMATTER.sub("", old, count=1).rstrip()
+            clean_note = " ".join((note or "").split())
+            line = f"- {self._today()}: " + ("; ".join(changes) if changes else "note") + (f". {clean_note}" if clean_note else "")
+            body += ("\n" if "\n## History\n" in body else "\n\n## History\n\n") + line + "\n"
             r = self._store(p, name, new, body, (changes[0] if changes else "note") if len(changes) <= 1 else f"{len(changes)} field changes")
         return {**r, "changes": changes}
 
@@ -573,6 +581,10 @@ class Wiki:
                 for sid in v:
                     if not (isinstance(sid, str) and SOURCE_ID.fullmatch(sid)):
                         raise WikiError(f"bad source id {str(sid)[:60]!r}: use 1-200 characters from letters, digits and : / . _ @ -")
+                    # Source ids are stored verbatim (they are references, not prose), so anything the scrubber would
+                    # remove (an email, phone, SSN, card or labelled number) is refused rather than kept.
+                    if any(scrub(sid)[1].values()):
+                        raise WikiError("a source id may not contain an email, phone or ID number; cite the system of record instead")
                 out[k] = v
             else:
                 out[k] = walk(v, 0)
@@ -585,7 +597,8 @@ class Wiki:
         if not entries:
             return
         old = self.store.read("log.md") or LOG_HEADER
-        self.store.write("log.md", old + "".join(f"\n## [{self._today()}] {k} | {p} — {s.strip()[:200]}\n" for k, p, s in entries))
+        # One entry per line: a caller-supplied summary with line breaks could otherwise forge extra log entries.
+        self.store.write("log.md", old + "".join(f"\n## [{self._today()}] {k} | {p} — {' '.join(str(s).split())[:200]}\n" for k, p, s in entries))
 
     def rebuild_index(self) -> None:
         self._rebuild_hubs()          # hubs first, so the index lists them
@@ -627,9 +640,15 @@ class Wiki:
                 areas.setdefault(str(m["fm"].get("area") or "Unsorted"), []).append((p, m))
         today = self._today()
         hub_links = []
+        used: set[str] = set()
         for area in sorted(areas, key=lambda a: (a == "Unsorted", a.lower())):
             projs = areas[area]
-            slug = slugify(area)
+            # Distinct labels can share a slug ("R&D", "R D"): number the later ones so no hub overwrites another.
+            base = slug = slugify(area) or "area"
+            n = 2
+            while slug in used:
+                slug, n = f"{base}-{n}", n + 1
+            used.add(slug)
             active = [x for x in projs if str(x[1]["fm"].get("status", "")).lower() in ACTIVE]
             rest = [x for x in projs if x not in active]
 
@@ -712,19 +731,27 @@ class Wiki:
         captures are listed as follow-ups on the session page. Nothing in the payload is dropped silently: select
         values outside records.ALLOWED are omitted and reported in `dropped_values`.
         """
-        _check_payload(payload)
+        ignored = _check_payload(payload)
         s = payload.get("session") or {}
         if not s.get("summary"):
             raise WikiError("session.summary is required")
         with self._lock:
+            # All or nothing: every page goes to a staging layer first and reaches the store only if the whole ingest
+            # succeeded. A late failure (an oversized note, a bad value) leaves the silo exactly as it was.
+            real, self.store = self.store, _Staged(self.store)
             self._deferred = []
             try:
                 result = self._ingest(payload, s)
+                staged = self.store.pending
             finally:
+                self.store = real
                 entries, self._deferred = self._deferred, None
-                if entries:
-                    self.rebuild_index()
-                    self._log_many(entries)
+            for name, text in staged.items():
+                real.write(name, text)
+            if entries:
+                self.rebuild_index()
+                self._log_many(entries)
+            result["ignored_fields"] = ignored
             result["pages_to_review"] = self._review_candidates(payload, set(result["created"]) | set(result["updated"]) | {result["session"]})
             return result
 
@@ -752,8 +779,11 @@ class Wiki:
         created: list[str] = []
         updated: list[str] = []
 
+        scrubbed: Counter = Counter()
+
         def note(result: dict) -> None:
             (created if result["action"] == "created" else updated).append(result["path"])
+            scrubbed.update(result.get("scrubbed") or {})
 
         for proj in payload.get("projects") or []:
             name = (proj.get("name") or "").strip()
@@ -782,6 +812,10 @@ class Wiki:
             name = f"{path}.md"
             text = (n.get("body") or "").strip()
             old = self.store.read(name)
+            if old is not None and str(parse_frontmatter(old).get("title", "")).strip().lower() != ntitle.lower():
+                # Same slug, different note ("C++" and "C#" both become notes/c): a new page, never a merge.
+                path = self._unique("notes", slugify(ntitle))
+                name, old = f"{path}.md", None
             if old is not None:
                 fm = parse_frontmatter(old)
                 note(self._store(path, name, fm, FRONTMATTER.sub("", old, count=1).rstrip() + f"\n\n## Update {date}\n\n{text}\n", f"update from session {date}"))
@@ -814,7 +848,7 @@ class Wiki:
                                               "source_ai": s.get("source_ai") or "Claude", "source_ids": [f"claude-session:{date}"]},
                         f"# {title}\n\n" + "\n".join(parts), f"session {date}: {(concerning or title)[:80]}")
         note(r)
-        return {"session": path, "created": created, "updated": updated, "follow_ups": counts, "scrubbed": dict(Counter(r["scrubbed"])),
+        return {"session": path, "created": created, "updated": updated, "follow_ups": counts, "scrubbed": dict(scrubbed + rec["scrubbed"]),
                 "dropped_values": rec["dropped"]}
 
     def _ingest_records(self, payload: dict, session: str, projects: dict, scope_of, date: str) -> dict:
@@ -826,7 +860,7 @@ class Wiki:
             m = self._meta(name)
             if m["fm"].get("type") in existing:
                 existing[m["fm"]["type"]][m["title_low"].strip()] = (p, name)
-        out = {"created": [], "updated": [], "links": [], "dropped": [], "tasks": 0, "future_needs": 0}
+        out = {"created": [], "updated": [], "links": [], "dropped": [], "tasks": 0, "future_needs": 0, "scrubbed": Counter()}
         specs = [(records.TASK_TYPE, records.TASKS, "session", payload.get("tasks") or [],
                   lambda t: {"title": t.get("task"), "status": t.get("status"), "priority": t.get("priority"), "kind": t.get("type"),
                              "due": t.get("due"), "project": t.get("project"), "notes": t.get("notes")}),
@@ -856,48 +890,96 @@ class Wiki:
                         body += f"\n\n## Update {date}\n\n{d['notes'].strip()}"
                     r = self._store(p, name, merged, body + "\n", f"task update from session {date}")
                     out["updated"].append(r["path"])
+                    out["scrubbed"].update(r.get("scrubbed") or {})
                 else:
                     p = self._unique(section, slugify(title))
                     body = f"# {title}\n\n" + ((d.get("notes") or "").strip() + "\n" if d.get("notes") else "")
                     r = self._store(p, f"{p}.md", fm, body, f"new {rtype.replace('_', ' ')} from session {date}")
                     existing[rtype][title.lower()] = (p, f"{p}.md")
                     out["created"].append(r["path"])
+                    out["scrubbed"].update(r.get("scrubbed") or {})
                 out["links"].append(f"- {wikilink(r['path'], title)}")
         return out
 
 
+
+class _Staged:
+    """A write buffer over a Store: reads see staged writes first, nothing reaches the real store until the caller
+    flushes `pending`. ingest_session runs on one so a failed ingest writes nothing."""
+
+    def __init__(self, store):
+        self._store, self.pending = store, {}
+
+    def names(self) -> list[str]:
+        return sorted(set(self._store.names()) | set(self.pending))
+
+    def read(self, name: str) -> str | None:
+        return self.pending[name] if name in self.pending else self._store.read(name)
+
+    def write(self, name: str, text: str) -> None:
+        self.pending[name] = text
+
+
 MAX_ITEMS = 200                         # per payload array: one ingest must not write unbounded pages
-PAYLOAD_ARRAYS = ("projects", "notes", "tasks", "future_needs", "maintenance", "captures")
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+# The fields ingest reads, per object. Anything else is reported back in `ignored_fields`, never silently dropped.
+FIELDS = {
+    "meta": {"source", "context", "default_type"},
+    "session": {"title", "date", "source_ai", "import_status", "summary", "concerning", "cross_related_projects", "store_raw_json"},
+    "projects": {"name", "summary", "type", "status", "area"},
+    "notes": {"title", "tag", "project", "body"},
+    "tasks": {"task", "project", "priority", "status", "due", "type", "notes"},
+    "future_needs": {"name", "horizon", "status", "related_project", "project", "notes"},
+    "maintenance": {"name", "cadence", "category", "automation", "priority", "project"},
+    "captures": {"capture", "type", "project"},
+}
+ITEM_KEY = {"projects": "name", "notes": "title", "tasks": "task", "future_needs": "name", "maintenance": "name", "captures": "capture"}
 LIST_FIELDS = {"cross_related_projects", "tag"}
+BOOL_FIELDS = {"store_raw_json"}
+KNOWN_TOP = set(FIELDS) | {"repos"}     # `repos` is part of the canonical JSON but not used by the wiki
 
 
-def _check_payload(payload) -> None:
-    """Refuse a malformed session payload BEFORE anything is written, so an ingest is never left half done.
-    Arrays must be lists of objects (at most MAX_ITEMS each); fields must be strings, or lists of strings for
-    `tag` and `cross_related_projects`."""
+def _check_payload(payload) -> list[str]:
+    """Refuse a malformed session payload BEFORE anything is staged, and list the fields ingest will not use.
+
+    Refused: a non-object payload or item, an array that is not a list or has more than MAX_ITEMS items, a value of the
+    wrong type, an item without its identifying field (a note without `title`), and a `session.date` that is not
+    YYYY-MM-DD. Reported (returned): unknown keys, so a misspelled `bdy` is visible instead of an empty note."""
     if not isinstance(payload, dict):
         raise WikiError("payload must be an object")
+    ignored = [k for k in payload if k not in KNOWN_TOP]
 
-    def fields(obj: dict, where: str) -> None:
+    def check(obj: dict, kind: str, where: str) -> None:
         for k, v in obj.items():
-            if v is None or isinstance(v, str):
+            if k not in FIELDS[kind]:
+                ignored.append(f"{where}.{k}")
                 continue
-            if k in LIST_FIELDS and isinstance(v, list) and all(isinstance(x, str) for x in v):
-                continue
-            raise WikiError(f"{where}.{k} must be a string" + (" or a list of strings" if k in LIST_FIELDS else ""))
+            ok = (v is None or isinstance(v, str)
+                  or (k in LIST_FIELDS and isinstance(v, list) and all(isinstance(x, str) for x in v))
+                  or (k in BOOL_FIELDS and isinstance(v, bool)))
+            if not ok:
+                raise WikiError(f"{where}.{k} must be " + ("a list of strings" if k in LIST_FIELDS else "true or false" if k in BOOL_FIELDS else "a string"))
 
-    session = payload.get("session")
-    if session is not None:
-        if not isinstance(session, dict):
-            raise WikiError("session must be an object")
-        fields(session, "session")
-    for key in PAYLOAD_ARRAYS:
-        items = payload.get(key)
+    for kind in ("meta", "session"):
+        obj = payload.get(kind)
+        if obj is None:
+            continue
+        if not isinstance(obj, dict):
+            raise WikiError(f"{kind} must be an object")
+        check(obj, kind, kind)
+    date = (payload.get("session") or {}).get("date")
+    if date not in (None, "") and not DATE_RE.fullmatch(date):
+        raise WikiError(f"session.date must be YYYY-MM-DD, not {str(date)[:20]!r}")
+    for kind, key in ITEM_KEY.items():
+        items = payload.get(kind)
         if items is None:
             continue
         if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
-            raise WikiError(f"{key} must be a list of objects")
+            raise WikiError(f"{kind} must be a list of objects")
         if len(items) > MAX_ITEMS:
-            raise WikiError(f"{key}: at most {MAX_ITEMS} items per ingest")
+            raise WikiError(f"{kind}: at most {MAX_ITEMS} items per ingest")
         for n, item in enumerate(items):
-            fields(item, f"{key}[{n}]")
+            check(item, kind, f"{kind}[{n}]")
+            if not str(item.get(key) or "").strip():
+                raise WikiError(f"{kind}[{n}] needs a {key}")
+    return ignored

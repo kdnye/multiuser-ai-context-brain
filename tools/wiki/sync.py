@@ -42,6 +42,16 @@ def push(wiki: Path, backend: Backend, force: bool = False) -> dict:
     return counts
 
 
+def _inside(dest: Path, name: str) -> Path:
+    """dest/name, refused when the object name would land outside dest (`../x`, an absolute path, a drive letter):
+    bucket object names are arbitrary strings, and a pull must never write elsewhere on the operator's machine."""
+    root = dest.resolve()
+    target = (dest / name).resolve()
+    if name.startswith(("/", "\\")) or ":" in name or root not in target.parents:
+        raise ValueError(f"refusing object name outside the destination: {name[:80]!r}")
+    return dest / name
+
+
 def pull(backend: Backend, dest: Path) -> dict:
     """Write every page in the bucket under `dest` and a manifest of their hashes. Returns counts and the manifest path."""
     dest.mkdir(parents=True, exist_ok=True)
@@ -50,7 +60,7 @@ def pull(backend: Backend, dest: Path) -> dict:
         text = backend.get(name)
         if text is None:  # deleted between list and get: skip it, the next pull will agree
             continue
-        target = dest / name
+        target = _inside(dest, name)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8", newline="\n")
         manifest[name] = _sha(text)
@@ -68,8 +78,12 @@ def verify(dest: Path) -> dict:
             missing.append(name)
         elif _sha(f.read_text(encoding="utf-8")) != digest:
             altered.append(name)
-    extra = sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*.md") if p.relative_to(dest).as_posix() not in manifest)
-    return {"pages": len(manifest), "missing": missing, "altered": altered, "extra": extra, "ok": not (missing or altered)}
+    # Extra pages fail verification (a reused folder can keep pages deleted from the bucket); dot-folders such as
+    # Obsidian's .obsidian/ are not wiki pages and are skipped, as vault() skips them.
+    extra = sorted(r for r in (p.relative_to(dest) for p in dest.rglob("*.md"))
+                   if not any(part.startswith(".") for part in r.parts) and r.as_posix() not in manifest)
+    extra = [r.as_posix() for r in extra]
+    return {"pages": len(manifest), "missing": missing, "altered": altered, "extra": extra, "ok": not (missing or altered or extra)}
 
 
 def vault(backend: Backend, dest: Path) -> dict:

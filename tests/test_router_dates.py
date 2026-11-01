@@ -90,17 +90,24 @@ def test_date_calls_are_audited(brain):
     assert [(e["action"], e["allowed"]) for e in events] == [("timeline", True), ("list", True), ("log", True), ("timeline", False)]
 
 
-def test_malformed_silo_refusal_is_audited_with_the_raw_name(brain):
+def test_malformed_silo_refusal_is_audited_as_a_safe_marker(brain):
     events = []
     brain._audit = events.append
     junk = "../../etc/passwd" + "x" * 200
     with pytest.raises(PermissionError) as exc:
         brain.timeline(ANA, "2026-10-20", "2026-10-20", silo=junk)
     assert str(exc.value).startswith("no access to silo '../../etc/passwd")
-    assert len(events) == 1 and events[0]["allowed"] is False and events[0]["silo"] == junk[:80] and events[0]["action"] == "timeline"
+    assert len(events) == 1 and events[0]["allowed"] is False and events[0]["silo"] == "<invalid>" and events[0]["action"] == "timeline"
     events.clear()
     brain.list(ANA, silo="me")                                    # near miss: a valid alias is audited once, allowed
     assert [(e["allowed"], e["silo"]) for e in events] == [(True, "users/a0000000-0000-4000-8000-000000000001")]
+    events.clear()
+    with pytest.raises(PermissionError):
+        brain.read(ANA, "person@example.com", silo="finance")          # an email as a path never reaches the audit log
+    assert events[0]["path"] == "<invalid>" and "@" not in str(events)
+    events.clear()
+    brain.log(ANA, n=10**9)
+    assert events[0]["allowed"] is True                                    # clamped server-side (MAX_LOG), not refused
 
 
 def test_log_returns_truncation_flag(brain):
