@@ -1,0 +1,20 @@
+# local environments and caches
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+# local data: never commit silos, wiki content, raw sources, seeds you built or private material
+local-silos/
+build/
+raw/
+/wiki/
+private/
+*.zip
+# secrets and private term lists
+.env
+.env.*
+*.pem
+*.key
+*credentials*.json
+.release-denylist
+.claude/settings.local.json

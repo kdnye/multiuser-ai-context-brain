@@ -1,0 +1,12 @@
+{
+  "about": "Retrieval regression set for wiki_context over the example shared seed (examples/seed/shared). Measured by tools/eval_recall.py as hit@3 and MRR. In a real deployment keep your own set (real questions people asked, with the page that must come back) outside this repo and pass it with --questions; add a row whenever a real question misses.",
+  "questions": [
+    {"q": "How do I connect the brain to Claude?", "gold": ["how-to/connect-the-brain-to-claude-and-chatgpt"]},
+    {"q": "who can read the finance silo", "gold": ["reference/brain-silos-and-who-can-read-them"]},
+    {"q": "run my brain onboarding", "gold": ["how-to/brain-onboarding-interview"]},
+    {"q": "are my notes private", "gold": ["explanation/how-the-brain-keeps-your-notes-private"]},
+    {"q": "open orders dashboard", "gold": ["dashboards/open-orders"]},
+    {"q": "getting started", "gold": ["tutorials/getting-started-with-the-brain"]},
+    {"q": "publish a page to the shared area", "gold": ["how-to/ask-for-a-page-in-the-shared-area"]}
+  ]
+}

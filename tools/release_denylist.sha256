@@ -1,0 +1,3 @@
+# SHA-256 of long, unguessable lowercase phrases that must never appear in this repo (see tools/release_check.py:
+# short or guessable terms can be reversed from their hash; keep those in the git-ignored .release-denylist instead).
+# Add with: python -m tools.release_check --hash "<phrase>" >> tools/release_denylist.sha256

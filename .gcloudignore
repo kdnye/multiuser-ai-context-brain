@@ -1,0 +1,26 @@
+# `gcloud builds submit` uploads this folder and reads THIS file (or, if absent, .gitignore). List every private or
+# bulky path. Patterns follow gitignore rules; root-only paths start with /.
+.git
+.claude
+.venv
+.mcp.json
+/docs/
+/tests/
+/examples/
+/skills/
+/templates/
+local-silos/
+build/
+raw/
+/wiki/
+private/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.zip
+.env
+.env.*
+*.pem
+*.key
+*credentials*.json
+.release-denylist
