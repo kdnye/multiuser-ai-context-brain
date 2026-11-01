@@ -1,0 +1,12 @@
+apps/example-quotes.md
+dashboards/open-orders.md
+explanation/how-the-brain-keeps-your-notes-private.md
+how-to/ask-for-a-page-in-the-shared-area.md
+how-to/brain-onboarding-interview.md
+how-to/connect-the-brain-to-claude-and-chatgpt.md
+reference/brain-silos-and-who-can-read-them.md
+roles/finance.md
+roles/it.md
+roles/office-manager.md
+roles/ops.md
+tutorials/getting-started-with-the-brain.md
