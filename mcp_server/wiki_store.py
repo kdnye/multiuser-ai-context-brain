@@ -69,12 +69,24 @@ class WikiError(ValueError):
 
 class Wiki:
     def __init__(self, root: str | Path | Store, today: Callable[[], str] | None = None, personal: bool = False):
-        self.store: Store = FileStore(root) if isinstance(root, (str, Path)) else root
+        self._base_store: Store = FileStore(root) if isinstance(root, (str, Path)) else root
+        self._staging = threading.local()    # the ingesting thread's staged view; every other thread keeps the real store
         self._today = today or (lambda: dt.datetime.now(dt.UTC).date().isoformat())
         self._lock = threading.RLock()
         self._personal = personal        # a user's own silo: their person pages may keep phone numbers (never shared or role silos)
         self._meta_cache: dict[str, tuple[str, dict]] = {}
         self._deferred: list[tuple[str, str, str]] | None = None   # (kind, page, summary) while a batch defers bookkeeping
+
+    @property
+    def store(self) -> Store:
+        """The store this thread reads and writes: its own staging layer while it runs an ingest, else the real one.
+        Staging is per thread so a concurrent reader never sees pages of an ingest that has not been committed."""
+        staged = getattr(self._staging, "store", None)
+        return self._base_store if staged is None else staged
+
+    @store.setter
+    def store(self, value: Store) -> None:
+        self._base_store = value
 
     def _meta(self, name: str) -> dict:
         """Parsed view of one page (frontmatter, body, lowercased text, summary), computed once per page version.
@@ -640,15 +652,25 @@ class Wiki:
                 areas.setdefault(str(m["fm"].get("area") or "Unsorted"), []).append((p, m))
         today = self._today()
         hub_links = []
-        used: set[str] = set()
+        # Distinct labels can share a slug ("R&D", "R D"). A hub keeps the slug it already has, so adding a colliding
+        # area never moves an existing hub (links to it would break); only an area with no hub yet takes a free slug.
+        held: dict[str, str] = {}
+        for name in self.store.names():
+            if name.startswith(AREA_PREFIX) and name.endswith(".md"):
+                title = str(parse_frontmatter(self.store.read(name) or "").get("title", ""))
+                if title.startswith("Area: ") and title[6:] in areas:
+                    held.setdefault(title[6:], name[len(AREA_PREFIX):-3])
+        used: set[str] = set(held.values())
         for area in sorted(areas, key=lambda a: (a == "Unsorted", a.lower())):
             projs = areas[area]
-            # Distinct labels can share a slug ("R&D", "R D"): number the later ones so no hub overwrites another.
-            base = slug = slugify(area) or "area"
-            n = 2
-            while slug in used:
-                slug, n = f"{base}-{n}", n + 1
-            used.add(slug)
+            if area in held:
+                slug = held[area]
+            else:
+                base = slug = slugify(area) or "area"
+                n = 2
+                while slug in used:
+                    slug, n = f"{base}-{n}", n + 1
+                used.add(slug)
             active = [x for x in projs if str(x[1]["fm"].get("status", "")).lower() in ACTIVE]
             rest = [x for x in projs if x not in active]
 
@@ -717,6 +739,18 @@ class Wiki:
             path, n = f"{section}/{slug}-{n}", n + 1
         return path
 
+    def _note_page(self, title: str) -> tuple[str, str | None]:
+        """(path, existing text or None) for a note title. Titles that share a slug ("C++" and "C#" both become `c`)
+        are separate pages (`c`, `c-2`, ...): find the page whose title matches, else the first free path, so a
+        repeated title updates its own page instead of minting `c-3`, `c-4`."""
+        slug = slugify(title)
+        path, n = f"notes/{slug}", 2
+        while True:
+            old = self.store.read(f"{path}.md")
+            if old is None or str(parse_frontmatter(old).get("title", "")).strip().lower() == title.lower():
+                return path, old
+            path, n = f"notes/{slug}-{n}", n + 1
+
     def _project_index(self) -> dict[str, str]:
         out = {}
         for p, name in self._all():
@@ -738,13 +772,15 @@ class Wiki:
         with self._lock:
             # All or nothing: every page goes to a staging layer first and reaches the store only if the whole ingest
             # succeeded. A late failure (an oversized note, a bad value) leaves the silo exactly as it was.
-            real, self.store = self.store, _Staged(self.store)
+            real = self._base_store
+            layer = _Staged(real)
+            self._staging.store = layer           # this thread only: other threads keep reading the real store
             self._deferred = []
             try:
                 result = self._ingest(payload, s)
-                staged = self.store.pending
+                staged = layer.pending
             finally:
-                self.store = real
+                self._staging.store = None
                 entries, self._deferred = self._deferred, None
             for name, text in staged.items():
                 real.write(name, text)
@@ -791,7 +827,9 @@ class Wiki:
                 path = self._unique("projects", slugify(name))
                 scope = "personal" if proj.get("type") == "Personal" else "work"
                 body = (f"# {name}\n\n{proj.get('summary') or ''}\n\n- **Status:** {proj.get('status') or 'unknown'}\n- **Type:** {proj.get('type') or 'unknown'}\n")
+                area = (proj.get("area") or "").strip()
                 r = self._store(path, f"{path}.md", {"title": name, "type": "project", "scope": scope, "status": proj.get("status"),
+                                                      **({"area": area} if area else {}),
                                                       "source_ids": [f"claude-session:{date}"]}, body, f"new project from session {date}")
                 projects[name.lower()] = path
                 note(r)
@@ -808,14 +846,9 @@ class Wiki:
             ntitle = (n.get("title") or "").strip()
             if not ntitle:
                 continue
-            path = f"notes/{slugify(ntitle)}"
+            path, old = self._note_page(ntitle)
             name = f"{path}.md"
             text = (n.get("body") or "").strip()
-            old = self.store.read(name)
-            if old is not None and str(parse_frontmatter(old).get("title", "")).strip().lower() != ntitle.lower():
-                # Same slug, different note ("C++" and "C#" both become notes/c): a new page, never a merge.
-                path = self._unique("notes", slugify(ntitle))
-                name, old = f"{path}.md", None
             if old is not None:
                 fm = parse_frontmatter(old)
                 note(self._store(path, name, fm, FRONTMATTER.sub("", old, count=1).rstrip() + f"\n\n## Update {date}\n\n{text}\n", f"update from session {date}"))

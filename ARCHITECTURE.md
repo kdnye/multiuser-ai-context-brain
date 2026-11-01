@@ -98,7 +98,9 @@ produces is provider-neutral, so adding one is a contained change (docs/roadmap.
   question words are ignored, then body matches; each hit comes with a few neighbours (links, backlinks, relations).
 - **Generated pages** per silo, rebuilt on write and never edited by hand: `index.md` (catalog), `log.md`
   (append-only, `## [YYYY-MM-DD] kind | page`), `reference/start-here` (map), area hubs, a people hub and
-  `reference/tasks`.
+  `reference/tasks`. An area hub is `reference/area-<slug>`; two area labels can share a slug ("R&D", "R D"), so a
+  hub keeps the slug it already has (found by its title) and only a new area takes the next free one: adding an
+  area never moves an existing hub.
 - **Ingest** (`wiki_ingest_session`): see [docs/session-capture.md](docs/session-capture.md). One index rebuild and
   one log write per ingest; returns `pages_to_review`.
 - **Scrubber** (`tools/wiki/scrub.py`), on bodies and frontmatter: removes emails, phone numbers, SSNs, card numbers,
@@ -165,7 +167,8 @@ step 5). Another backend (S3, Azure Blob, a database) needs only the three `Back
   `wiki_append` and `wiki_task_update` read, build and store under the silo's write lock, so concurrent calls never
   lose each other's change. `wiki_task_update` refuses fields of the other record type.
 - **Log and audit integrity:** summaries are collapsed to one line before they reach `log.md` (no forged entries);
-  audit lines log a caller's path or silo only when it is slug-like, otherwise `<invalid>`; `wiki_log` is clamped
+  audit lines log a caller's path or silo only when it is slug-like, otherwise `<invalid>`, and a slug that spells a
+  phone number or SSN (`PII_SHAPED` in `router.py`) is logged as `<redacted>`; `wiki_log` is clamped
   to 200 entries. `source_ids` that the scrubber would change (email, phone, ID number) are refused.
 - **Operator tools:** `pull` refuses object names that would land outside the destination; `verify` fails on extra
   pages (dot-folders such as `.obsidian/` excepted).
