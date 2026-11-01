@@ -8,6 +8,7 @@ Every check, allowed or refused, goes to the audit callback.
 
 from __future__ import annotations
 
+import re
 import threading
 from collections.abc import Callable
 
@@ -18,7 +19,15 @@ from mcp_server.wiki_store import Wiki, WikiError
 
 # Per-call result caps. context() runs links() over every page for every hit, so an unbounded limit let one call
 # monopolize the (single) instance: 60 pages at limit 60 took 9.7 s.
-MAX_CONTEXT, MAX_SEARCH, MAX_LIST, MAX_PER_DAY = 20, 50, 500, 100
+MAX_CONTEXT, MAX_SEARCH, MAX_LIST, MAX_PER_DAY, MAX_LOG = 20, 50, 500, 100, 200
+# Audit lines hold caller-supplied path and silo strings. Only slug-like values are logged as given; anything else (an
+# email, page text, a newline) becomes a fixed marker, so the log never carries personal data or forged lines.
+SAFE_TOKEN = re.compile(r"[a-z0-9/_-]{0,120}")
+
+
+def safe(value) -> str:
+    v = "" if value is None else str(value)
+    return v if SAFE_TOKEN.fullmatch(v) else "<invalid>"
 
 
 def clamp(n, hi: int) -> int:
@@ -47,12 +56,11 @@ class Brain:
         try:
             s = resolve(identity, silo)
         except PermissionError:
-            # A malformed silo name is still an attempt: audit it (raw string, truncated) before refusing.
-            raw = str(silo)[:80]
-            self._audit({"user_id": identity.user_id, "action": action, "silo": raw, "path": path, "allowed": False})
-            raise PermissionError(f"no access to silo {raw!r}") from None
+            # A malformed silo name is still an attempt: audit it (as a safe marker if it is not slug-like) before refusing.
+            self._audit({"user_id": identity.user_id, "action": action, "silo": safe(silo), "path": safe(path), "allowed": False})
+            raise PermissionError(f"no access to silo {str(silo)[:80]!r}") from None
         allowed = can_write(identity, s) if write else can_read(identity, s)
-        self._audit({"user_id": identity.user_id, "action": action, "silo": s, "path": path, "allowed": allowed})
+        self._audit({"user_id": identity.user_id, "action": action, "silo": s, "path": safe(path), "allowed": allowed})
         if not allowed:
             # Same message whether the silo exists or not: no probing of other silos.
             raise PermissionError(f"no access to silo {s!r}")
@@ -138,7 +146,7 @@ class Brain:
 
     def log(self, identity: Identity, n: int = 10, since: str | None = None, until: str | None = None, silo: str | None = None) -> dict:
         s = self._check(identity, silo or identity.home, False, "log")
-        return {"silo": s, **self._wiki(s).log_view(n, since, until)}
+        return {"silo": s, **self._wiki(s).log_view(clamp(n, MAX_LOG), since, until)}
 
     def links(self, identity: Identity, path: str, silo: str | None = None) -> dict:
         s = self._check(identity, silo, False, "links", path)

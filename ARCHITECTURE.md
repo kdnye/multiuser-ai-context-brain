@@ -136,7 +136,8 @@ The staff-facing layer, mostly in `shared`. Diataxis splits documents by what th
 
 Frontmatter: `owner`, `review_by` (YYYY-MM-DD), `audience` (role slugs or `["all"]`). Writes refuse malformed values
 (bad date, non-list audience, non-https url, a dashboard card without `url` and `system_role`); lint reports
-`missing_owner`, `missing_review_by`, `review_overdue`, `unknown_audience`. A role portal, when read, lists every page
+`missing_owner`, `missing_review_by`, `bad_review_by` (not YYYY-MM-DD, e.g. after a hand edit), `review_overdue`,
+`unknown_audience`. A role portal, when read, lists every page
 whose `audience` names it, grouped by kind; it is computed on read and never stored. `audience` is who a page is FOR,
 not who may read it: access stays with the silo.
 
@@ -157,9 +158,17 @@ step 5). Another backend (S3, Azure Blob, a database) needs only the three `Back
   `index.md`). `source_ids` must fullmatch `[A-Za-z0-9:/._@-]{1,200}`; frontmatter dicts and lists are scrubbed too.
 - **Denial of service:** tools run in a worker thread; the token cache is bounded; every scrub/date regex is linear
   (200 KB adversarial inputs run well under 0.5 s; tests pin this); every stored page is capped at 200 KB; limits are
-  clamped (context 20, search 50, list 500, timeline 100 per day and 150 in total).
+  clamped (context 20, search 50, list 500, log 200, timeline 100 per day and 150 in total).
 - **Stale writes:** `wiki_read` returns `revision` (12 hex of the SHA-256 of the stored page); `wiki_write(...,
   expected_revision=...)` is refused with `revision_conflict` if the page changed since.
+- **Atomic ingest and locked updates:** `wiki_ingest_session` stages every page and writes only if all succeed;
+  `wiki_append` and `wiki_task_update` read, build and store under the silo's write lock, so concurrent calls never
+  lose each other's change. `wiki_task_update` refuses fields of the other record type.
+- **Log and audit integrity:** summaries are collapsed to one line before they reach `log.md` (no forged entries);
+  audit lines log a caller's path or silo only when it is slug-like, otherwise `<invalid>`; `wiki_log` is clamped
+  to 200 entries. `source_ids` that the scrubber would change (email, phone, ID number) are refused.
+- **Operator tools:** `pull` refuses object names that would land outside the destination; `verify` fails on extra
+  pages (dot-folders such as `.obsidian/` excepted).
 - **Errors:** wiki and access refusals come back as data; anything else returns `{"error": "internal error"}` and
   logs only the exception type and tool name.
 - **Open: prompt-injected writes.** Text ingested into a person's own silo can steer a session that holds

@@ -23,6 +23,7 @@ ALLOWED = {
                 "kind": ["Personal", "Business", "Research"]},
     NEED_TYPE: {"horizon": ["Now", "Next", "Later", "Someday"], "status": ["Open", "Promoted to Task", "Dropped"]},
 }
+UPDATABLE = {TASK_TYPE: ("status", "priority", "due"), NEED_TYPE: ("status", "horizon")}   # wiki_task_update fields per type
 OPEN_TASK = [s for s in ALLOWED[TASK_TYPE]["status"] if s != "Done"]
 PRIORITY_RANK = {p: i for i, p in enumerate(ALLOWED[TASK_TYPE]["priority"])}
 
@@ -48,7 +49,7 @@ def validate(fm: dict, strict: bool) -> tuple[dict, list[str]]:
             dropped.append(f"{key}={v}")
             out.pop(key)
     due = out.get("due")
-    if due not in (None, "") and not (isinstance(due, str) and DATE.match(due)):
+    if due not in (None, "") and not (isinstance(due, str) and DATE.fullmatch(due)):
         if strict:
             raise RecordError(f"due must be YYYY-MM-DD, not {due!r}")
         dropped.append(f"due={due}")

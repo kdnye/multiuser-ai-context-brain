@@ -102,7 +102,7 @@ silo only.
 |---|---|
 | Every change | `python -m pytest`, `ruff check .`, `python -m tools.release_check`, `gitleaks detect --no-git --source .` |
 | Search change | `python -m tools.eval_recall --wiki <folder> [--questions <file>]` before and after (STANDARDS 13). Your own question set is JSON: `{"questions": [{"q": "<a real question>", "gold": ["<section/slug that must come back>"]}]}`; keep it private |
-| Monthly | Pull each silo you administer and lint it: `python -m tools.wiki pull --bucket <BUCKET> --prefix silos/<silo> --dest <folder>`, then `python -m tools.wiki lint --wiki <folder>` (exit 1 when there are findings; fix broken links, orphans, `missing_owner`, `review_overdue`) |
+| Monthly | Pull each silo you administer and lint it: `python -m tools.wiki pull --bucket <BUCKET> --prefix silos/<silo> --dest <folder>`, then `python -m tools.wiki lint --wiki <folder>` (exit 1 when there are findings; fix broken links, orphans, `missing_owner`, `bad_review_by`, `review_overdue`) |
 | Before a secret expires | Rotate the AI client's OAuth secret in Entra and re-enter it in the product (deploy/connectors.md) |
 | Backup / restore | The bucket is versioned; `python -m tools.wiki pull` for an offline copy; restore steps in deploy/README.md |
 | Upgrading `mcp` | It is pinned below 2.0 on purpose (2.0 renamed FastMCP); test before raising the pin |

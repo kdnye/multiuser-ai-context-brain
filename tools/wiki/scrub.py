@@ -14,7 +14,7 @@ from collections import Counter
 # Every quantifier is bounded (RFC limits: local part 64, label 63), so a long run with no "@" costs at most 64 steps
 # per start position: linear, not quadratic (a 128 KB run of "a" took 56 s with the unbounded form).
 _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9\-]{1,63}(?:\.[A-Za-z0-9\-]{1,63}){0,20}\.[A-Za-z]{2,24}")
-_PHONE = re.compile(r"(?<![\d.])(?:\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}(?![\d])")
+_PHONE = re.compile(r"(?<![\d.])(?:\+?1[\s.\-]?)?(?:\(\d{3}\)[\s.\-]?|\d{3}[\s.\-])\d{3}[\s.\-]\d{4}(?![\d])")
 _SSN = re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)")
 _LABELLED = re.compile(r"(?i)\b(routing|account|acct|aba|member|group|policy|subscriber|claim|mrn|patient|chart)\b([^\n\d]{0,30}?)(\d[\d \-]{6,}\d)")
 _CARD = re.compile(r"(?<!\d)(?:\d[ \-]?){13,19}(?!\d)")

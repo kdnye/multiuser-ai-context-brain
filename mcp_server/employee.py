@@ -86,7 +86,9 @@ def lint(wiki, today: str) -> list[dict]:
         rb = fm.get("review_by")
         if not rb:
             issues.append({"kind": "missing_review_by", "page": name})
-        elif isinstance(rb, str) and DATE.fullmatch(rb) and rb < today:
+        elif not (isinstance(rb, str) and DATE.fullmatch(rb)):
+            issues.append({"kind": "bad_review_by", "page": name, "review_by": str(rb)[:40]})
+        elif rb < today:
             issues.append({"kind": "review_overdue", "page": name, "review_by": rb})
         for r in audience(fm):
             if r != ALL and r not in roles:
