@@ -39,12 +39,42 @@ def wiki(tmp_path):
 
 
 # --- 1. scrub: no quadratic regex ---------------------------------------------------------------------------------
-@pytest.mark.parametrize("text", ["a" * BIG, "a." * (BIG // 2), "1" * BIG, "1 " * (BIG // 2), "1-" * (BIG // 2), "a@" * (BIG // 2),
-                                  "account " * (BIG // 8), "dob " * (BIG // 4), "a@" + "b." * (BIG // 2), "a" * BIG + "@b.com",
-                                  "(" * BIG, "birthday" + " " * BIG, "account a" * (BIG // 10)], ids=lambda v: f"{v[:6]!r}-{len(v)}")
-def test_scrub_is_linear_on_adversarial_input(text):
-    _, secs = timed(scrub, text)
-    assert secs < FAST
+# Each builder makes an adversarial string of about n characters. The test checks how the cost SCALES, not how fast
+# the machine is: a fixed wall-clock limit flaked on a busy or slow box (the same input took 0.25s one run and 0.9s the
+# next), and it cannot tell a slow machine from a quadratic regex. 4x the input should cost about 4x the time; a
+# quadratic regex costs about 16x. We take the best of a few runs per size (noise only ever adds time), allow a wide
+# margin, and keep a generous absolute ceiling as a backstop.
+ADVERSARIAL = {
+    "a*": lambda n: "a" * n,
+    "a.*": lambda n: "a." * (n // 2),
+    "1*": lambda n: "1" * n,
+    "1 *": lambda n: "1 " * (n // 2),
+    "1-*": lambda n: "1-" * (n // 2),
+    "a@*": lambda n: "a@" * (n // 2),
+    "account*": lambda n: "account " * (n // 8),
+    "dob*": lambda n: "dob " * (n // 4),
+    "at-then-dots": lambda n: "a@" + "b." * (n // 2),
+    "a*@b.com": lambda n: "a" * n + "@b.com",
+    "(*": lambda n: "(" * n,
+    "birthday+spaces": lambda n: "birthday" + " " * n,
+    "account a*": lambda n: "account a" * (n // 10),
+}
+SCALE_RUNS, SCALE_MARGIN, SCALE_CEILING = 5, 8, 5.0
+
+
+def best_time(fn, arg, runs=SCALE_RUNS):
+    return min(timed(fn, arg)[1] for _ in range(runs))
+
+
+@pytest.mark.parametrize("build", ADVERSARIAL.values(), ids=ADVERSARIAL.keys())
+def test_scrub_is_linear_on_adversarial_input(build):
+    # Compare 1/8 and 1/2 of BIG (4x apart), where the scrubber is cleanly linear (about 4x time); a quadratic
+    # regex costs about 16x there, so the 8x margin separates them with room for noise. Past ~100k characters
+    # memory pressure adds a mild extra cost that is not a complexity problem, so the full BIG input is only
+    # held to the absolute ceiling.
+    small, mid = best_time(scrub, build(BIG // 8)), best_time(scrub, build(BIG // 2))
+    assert mid <= max(SCALE_MARGIN * small, 0.05), f"4x input cost {mid / small:.1f}x time: not linear"
+    assert timed(scrub, build(BIG))[1] < SCALE_CEILING
 
 
 def test_email_scrub_positive_negative_and_near_miss():
