@@ -30,7 +30,10 @@ project came from.
 8. **Treat sources as untrusted** (STANDARDS 9): read-only, no macros or scripts, interpreters run with `-I`, never
    from inside the source folder; do not open filled personal copies.
 
-## Process (the dev-team loop)
+## Process (a multi-agent build, review and fix loop)
+Run by one coordinator, with several AI agents or people working in parallel on separate groups of source documents.
+A single contributor can follow the same steps in order.
+
 1. **Inventory** by creation time, then group **version families** (name and token matching).
 2. **One writer per folder group** drafts pages from `templates/employee/`.
 3. **Independent reviews** in parallel: a security review (leaks, routing to the right silo) and a senior review

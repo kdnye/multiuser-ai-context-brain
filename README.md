@@ -31,11 +31,12 @@ verified. See [docs/roadmap.md](docs/roadmap.md).
 | `skills/brain-onboarding/` | A thin skill that runs the onboarding interview stored in the shared silo |
 | `deploy/` | Cloud Run + Cloud Storage runbook and the Entra/connector setup with lessons learned |
 | `docs/` | Concepts, session capture, document intake, roadmap |
-| `tests/` | About 230 tests, including every access-deny path and adversarial-input timing |
+| `tests/` | About 260 tests, including every access-deny path and adversarial-input timing |
 
 ## Quick start: run it locally (10 minutes, no cloud)
-Needs Python 3.11+ and git. For the pre-commit secret scan, install [gitleaks](https://github.com/gitleaks/gitleaks#installing)
-(e.g. `brew install gitleaks`, or a release binary on your PATH).
+Needs Python 3.11+ and git. Running the server and the tests does not need anything else. **Contributors also need
+[gitleaks](https://github.com/gitleaks/gitleaks#installing)** (e.g. `brew install gitleaks`, or a release binary on your
+PATH): the pre-commit checklist in [CONTRIBUTING.md](CONTRIBUTING.md) runs it, so install it before your first commit.
 ```bash
 git clone https://github.com/kdnye/multiuser-ai-context-brain && cd multiuser-ai-context-brain
 python -m venv .venv
@@ -60,7 +61,11 @@ Your private silo appears as `local-silos/users/<guid>/`; open `local-silos/` in
 
 ## Run it for a team (hosted)
 The tested setup is Google Cloud Run + a versioned Cloud Storage bucket + Microsoft Entra ID, and costs very little
-at team scale (one small instance). Follow [deploy/README.md](deploy/README.md) and
+at team scale (one small instance). That is the one stack this repo has been run on, not the only possible one. The engine
+itself does not depend on Google or Microsoft: storage is a backend in `mcp_server/store.py` and sign-in is the gate in
+`mcp_server/entra.py`. Moving to another bucket service or identity provider means writing a replacement for those
+two modules and changing the hosted-app wiring in `mcp_server/server.py`, which today requires `BRAIN_STORE=gcs` and
+the Entra settings. Local stdio mode needs neither. Follow [deploy/README.md](deploy/README.md) and
 [deploy/connectors.md](deploy/connectors.md). Staff then follow the seeded how-to
 `how-to/connect-the-brain-to-claude-and-chatgpt`.
 
