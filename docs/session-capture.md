@@ -37,14 +37,15 @@ pay data; the scrubber is a backstop, not the control.
   `repos` and `session.store_raw_json` are part of the canonical JSON and accepted.
 
 The ingest is **all or nothing**: pages are staged and written only if every page succeeds, so a late failure (for
-example a note over the 200 KB page limit) leaves the silo unchanged.
+example a note over the 200 KB page limit) leaves the silo unchanged. The staged pages are visible only to the
+ingesting call: a concurrent reader sees the silo as it was until the ingest commits.
 
 ## What the server does with it
 | Payload key | Result |
 |---|---|
 | `session` | A new page `sessions/<date>-<concerning>` (a second session that day gets `-2`). Its `scope` comes from the project it concerns. |
-| `projects` | A new `projects/<slug>` page for each name not already present (case-insensitive). Existing projects are not touched. |
-| `notes` | A new `notes/<slug>` page, or an `## Update <date>` section appended to the existing note with that title. A different title that happens to share the slug ("C++" and "C#") gets its own page (`notes/c-2`). |
+| `projects` | A new `projects/<slug>` page for each name not already present (case-insensitive), with its `area` saved in the frontmatter (it decides which area hub lists the project). Existing projects are not touched. |
+| `notes` | A new `notes/<slug>` page, or an `## Update <date>` section appended to the existing note with that title. A different title that happens to share the slug ("C++" and "C#") gets its own page (`notes/c-2`), and a later session with the same title finds and updates that page rather than creating `notes/c-3`. |
 | `tasks` | A record `tasks/<slug>` per task, deduped by title: an existing task keeps its values and only gains missing fields (plus an update section for `notes`). |
 | `future_needs` | A record `future-needs/<slug>`, deduped the same way. |
 | `maintenance`, `captures` | Listed as follow-ups on the session page. |

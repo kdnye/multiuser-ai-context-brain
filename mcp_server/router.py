@@ -23,11 +23,17 @@ MAX_CONTEXT, MAX_SEARCH, MAX_LIST, MAX_PER_DAY, MAX_LOG = 20, 50, 500, 100, 200
 # Audit lines hold caller-supplied path and silo strings. Only slug-like values are logged as given; anything else (an
 # email, page text, a newline) becomes a fixed marker, so the log never carries personal data or forged lines.
 SAFE_TOKEN = re.compile(r"[a-z0-9/_-]{0,120}")
+# A slug can still spell a phone number or SSN ("notes/555-123-4567", "notes/123456789"), since page slugs come from
+# titles. Mirrors the scrubber's phone and SSN shapes, with `-`/`_` separators and runs without separators too. It
+# over-redacts a 9 or 10 digit id on purpose: an audit line needs to say who and what kind, not carry a possible number.
+PII_SHAPED = re.compile(r"(?<!\d)(?:(?:1[-_]?)?\d{3}[-_]?\d{3}[-_]?\d{4}|\d{3}[-_]?\d{2}[-_]?\d{4})(?!\d)")
 
 
 def safe(value) -> str:
     v = "" if value is None else str(value)
-    return v if SAFE_TOKEN.fullmatch(v) else "<invalid>"
+    if not SAFE_TOKEN.fullmatch(v):
+        return "<invalid>"
+    return "<redacted>" if PII_SHAPED.search(v) else v
 
 
 def clamp(n, hi: int) -> int:
