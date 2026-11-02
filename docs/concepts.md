@@ -80,3 +80,8 @@ The first time someone connects, the assistant runs a short interview (language,
 speak up unprompted, how to label uncertainty, what never to save) and writes a `reference/profile` page to their
 own silo only after they confirm it. The script is a page in the shared silo, so every AI client runs the same one:
 `examples/seed/shared/how-to/brain-onboarding-interview.md`.
+
+The server tells the client whether onboarding happened: every `wiki_context` result carries `onboarded`, true only
+when the caller's own silo holds `reference/profile` with `type: profile`. Answers saved at any other path, or typed as
+something else, leave it false, and the hint then points the client at the interview. An operator can check the same
+thing by listing a user silo for `reference/profile.md`.

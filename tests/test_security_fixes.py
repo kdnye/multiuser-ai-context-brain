@@ -251,6 +251,9 @@ class Spy:
     def __init__(self):
         self.calls = {}
 
+    def profile_ok(self):
+        return True
+
     def context(self, topic, limit):
         self.calls["context"] = limit
         return {"results": []}
