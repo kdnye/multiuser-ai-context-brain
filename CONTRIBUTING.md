@@ -13,7 +13,7 @@ beyond the MCP SDK. Please keep it that way.
 2. Set up: `python -m venv .venv && source .venv/bin/activate && pip install -r requirements-mcp.txt pytest ruff`.
 3. Make the change with tests. Every new deny path gets a test; every new regex gets an adversarial-input timing test
    (see `tests/test_security_fixes.py`).
-4. Update the docs in the same PR (README, ARCHITECTURE, STANDARDS, CLAUDE.md, `docs/` as relevant).
+4. Engine changes land here first; forks port them by [docs/PORTING.md](docs/PORTING.md). Update the docs in the same PR (README, ARCHITECTURE, STANDARDS, CLAUDE.md, `docs/` as relevant).
 5. Run, and paste the results in the PR:
    ```bash
    python -m pytest

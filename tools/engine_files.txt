@@ -1,0 +1,16 @@
+# Engine files that forks copy from this repo. One repo-relative path or glob per line; a hash starts a comment.
+# `python -m tools.port_check` compares a fork against this list (docs/PORTING.md).
+# Every entry must match at least one existing file. A star does not cross a slash.
+mcp_server/wiki_store.py
+mcp_server/dates.py
+mcp_server/records.py
+mcp_server/store.py
+mcp_server/router.py
+mcp_server/access.py
+mcp_server/employee.py
+mcp_server/entra.py
+mcp_server/server.py
+tools/wiki/*.py
+tools/seed.py
+tools/eval_recall.py
+tools/release_check.py
