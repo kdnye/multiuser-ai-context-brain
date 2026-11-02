@@ -131,7 +131,12 @@ class Brain:
             out.sort(key=lambda r: -float(r.get("score", 0)))
         hint = ("Read the pages that matter with wiki_read(path, silo); cite them as silo:path."
                 if out else "Nothing on this in the silos you can read. Say so rather than guessing.")
-        res = {"topic": topic, "results": out[:limit], "profile": f"{identity.home}:reference/profile", "hint": hint}
+        onboarded = self._wiki(identity.home).profile_ok()
+        if not onboarded:       # say it outright rather than make the client infer it from a missing hit
+            hint += (" This user has no profile yet: read how-to/brain-onboarding-interview in the shared silo and"
+                     " run it; it saves reference/profile in their own silo.")
+        res = {"topic": topic, "results": out[:limit], "profile": f"{identity.home}:reference/profile",
+               "onboarded": onboarded, "hint": hint}
         if dated:
             res["dates"] = dates.ISO.findall(topic)
             if not out:

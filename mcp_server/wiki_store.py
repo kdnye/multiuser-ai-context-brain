@@ -416,6 +416,13 @@ class Wiki:
         return {"path": p, "title": me["fm"].get("title"), "outgoing": outgoing[:limit], "backlinks": incoming[:limit],
                 "counts": {"outgoing": len(outgoing), "backlinks": len(incoming)}, "missing_targets": missing}
 
+    def profile_ok(self) -> bool:
+        """True when this silo holds a real profile: `reference/profile` with `type: profile`. A preferences page at
+        any other path, or a page at that path with another type, does not count, so clients are told the truth
+        instead of inferring it."""
+        text = self.store.read("reference/profile.md")
+        return text is not None and parse_frontmatter(text).get("type") == "profile"
+
     def context(self, topic: str, limit: int = 5, neighbours: int = 5) -> dict:
         """One-call recall for a topic: the best-matching pages, each with a few neighbours, so an agent can see
         what the wiki already knows (and how it connects) before answering or writing."""
@@ -428,6 +435,7 @@ class Wiki:
                 near = (n["outgoing"] + n["backlinks"])[:neighbours]
                 out.append({**h, "neighbours": [{"path": x["path"], "title": x["title"], "via": x["via"]} for x in near if x["title"]]})
             res = {"topic": topic, "results": out, "dates": r["dates"], "profile": "reference/profile",
+                   "onboarded": self.profile_ok(),
                    "hint": ("Read the pages that matter with wiki_read before answering; cite them by path." if out else
                             "The wiki has nothing on this date. Say so rather than guessing.")}
             for k in ("note", "date_only"):
@@ -450,7 +458,7 @@ class Wiki:
             out.append({**h, "neighbours": [{"path": x["path"], "title": x["title"], "via": x["via"]} for x in near if x["title"]]})
         hint = ("Read the pages that matter with wiki_read before answering; cite them by path."
                 if out else "The wiki has nothing on this. Say so rather than guessing; if the session produces knowledge, record it.")
-        return {"topic": topic, "results": out, "profile": "reference/profile", "hint": hint}
+        return {"topic": topic, "results": out, "profile": "reference/profile", "onboarded": self.profile_ok(), "hint": hint}
 
     def close_titles(self, query: str, limit: int = 5) -> list[dict]:
         """Pages whose title words are close spellings of the query words (difflib ratio >= 0.75), for names and

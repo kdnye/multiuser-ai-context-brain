@@ -165,3 +165,20 @@ def test_custom_role_silos(monkeypatch):
     assert can_write(who, "shared") and can_write(who, "legal") and not can_write(who, "sales")
     with pytest.raises(PermissionError):
         resolve(who, "finance")
+
+
+PROFILE = '---\ntitle: "Profile"\ntype: "{t}"\nscope: "work"\nsource_ids: ["x"]\n---\n\n# Profile\n\nShort answers, bullets.\n'
+
+
+def test_context_says_whether_the_user_is_onboarded(brain):
+    assert brain.context(ANA, "anything")["onboarded"] is False
+    assert "brain-onboarding-interview" in brain.context(ANA, "anything")["hint"]
+    # answers saved at another path, or typed as a plain reference, do not count as a profile
+    brain.write(ANA, "reference/role-preferences", PROFILE.format(t="reference"), "x")
+    assert brain.context(ANA, "anything")["onboarded"] is False
+    brain.write(ANA, "reference/profile", PROFILE.format(t="reference"), "x")
+    assert brain.context(ANA, "anything")["onboarded"] is False
+    brain.write(ANA, "reference/profile", PROFILE.format(t="profile"), "x")
+    c = brain.context(ANA, "anything")
+    assert c["onboarded"] is True and "brain-onboarding-interview" not in c["hint"]
+    assert brain.context(BEN, "anything")["onboarded"] is False        # per user, never another user's profile
