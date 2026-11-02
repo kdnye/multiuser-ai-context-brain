@@ -34,10 +34,13 @@ _DENY = json.dumps({"error": "unauthorized"}).encode()
 
 class EntraValidator:
     def __init__(self, tenant_id: str, audiences: list[str], allowed_domains: list[str],
-                 key_for: Callable[[str], object] | None = None, leeway: int = 60):
+                 key_for: Callable[[str], object] | None = None, leeway: int = 60, required_role: str | None = None):
         if not tenant_id or not audiences or not allowed_domains:
             raise ValueError("tenant_id, audiences and allowed_domains are all required")
         self.tenant_id = tenant_id
+        # Optional defence in depth (BRAIN_REQUIRED_ROLE): demand this app role in the token, so a tenant account that
+        # Entra's "Assignment required" setting would have excluded cannot sign in if that setting is ever turned off.
+        self.required_role = (required_role or "").strip() or None
         self.issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
         self.audiences = list(audiences)
         self.domains = {d.strip().lower().lstrip("@") for d in allowed_domains if d.strip()}
@@ -48,6 +51,15 @@ class EntraValidator:
         self._key_for = key_for
         self._cache: dict[str, tuple[float, Identity]] = {}
         self._lock = threading.Lock()
+
+    def _allowed_email(self, email: str) -> bool:
+        """ASCII `local@domain` with exactly one "@", no whitespace, and a domain on the allow-list."""
+        local, sep, domain = email.partition("@")
+        return bool(sep and local and email.isascii() and "@" not in domain and not any(c.isspace() for c in email)
+                    and domain in self.domains)
+
+    def _allowed_roles(self, roles: frozenset) -> bool:
+        return self.required_role is None or self.required_role in roles
 
     def _remember(self, digest: str, exp: float, ident: Identity) -> None:
         """Cache a verified identity until the token expires. Expired entries are dropped on every insert and the
@@ -82,12 +94,14 @@ class EntraValidator:
         if claims.get("tid") != self.tenant_id:
             return None
         email = str(claims.get("preferred_username") or claims.get("email") or claims.get("upn") or "").strip().lower()
-        if "@" not in email or not email.isascii() or email.rsplit("@", 1)[1] not in self.domains:
+        if not self._allowed_email(email):
             return None
         roles = claims.get("roles") or []
         try:
             ident = Identity(user_id=claims["oid"], email=email,
                              roles=frozenset(r for r in roles if isinstance(r, str)))   # refuses an oid that is not a GUID
+            if not self._allowed_roles(ident.roles):
+                return None
             exp = float(claims["exp"])
         except (ValueError, TypeError):
             return None

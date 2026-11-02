@@ -86,18 +86,21 @@ def verify(dest: Path) -> dict:
     return {"pages": len(manifest), "missing": missing, "altered": altered, "extra": extra, "ok": not (missing or altered or extra)}
 
 
-def vault(backend: Backend, dest: Path) -> dict:
+def vault(backend: Backend, dest: Path, dry_run: bool = False, force: bool = False) -> dict:
     """Mirror the bucket into an Obsidian vault folder, in place.
 
     Pulls into a staging folder and verifies it first; only a verified copy touches the vault. Then writes pages
     that are new or changed, removes .md pages that no longer exist in the bucket, and never touches anything
     under a dot-folder (Obsidian keeps its settings, plugins and workspace in `.obsidian/`). The vault is a
     read-only view: edits made in Obsidian are overwritten on the next run.
+
+    Because it deletes, it refuses two mistakes before touching anything: an EMPTY bucket listing (a wrong prefix or an
+    outage would otherwise wipe the vault), and a destination whose .md files share no page with the bucket (the wrong
+    folder, e.g. someone's Documents). `force=True` overrides the second; `dry_run=True` reports what would change.
     """
     import shutil
     import tempfile
 
-    dest.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="vault-stage-") as tmp:
         stage = Path(tmp)
         pull(backend, stage)
@@ -105,6 +108,18 @@ def vault(backend: Backend, dest: Path) -> dict:
         if not check["ok"]:
             raise RuntimeError(f"staged copy failed verification: {check}")
         manifest = json.loads((stage / MANIFEST).read_text(encoding="utf-8"))
+        if not manifest:
+            raise RuntimeError("the bucket listing is empty: refusing to mirror it (that would remove every page in the vault); check --bucket and --prefix")
+        existing = sorted(f.relative_to(dest).as_posix() for f in (dest.rglob("*.md") if dest.is_dir() else [])
+                          if not any(part.startswith(".") for part in f.relative_to(dest).parts))
+        if existing and not set(existing) & set(manifest) and not (force or dry_run):
+            raise RuntimeError(f"{dest} holds {len(existing)} .md file(s) and none is a page of this bucket: it looks like the wrong "
+                               "folder (they are unrelated and would be deleted). Check --dest, or pass --force to mirror anyway")
+        if dry_run:
+            same = sum(1 for n in manifest if n in existing and (dest / n).read_text(encoding="utf-8") == (stage / n).read_text(encoding="utf-8"))
+            return {"pages": len(manifest), "written": len(manifest) - same, "unchanged": same,
+                    "removed": [r for r in existing if r not in manifest], "dry_run": True}
+        dest.mkdir(parents=True, exist_ok=True)
         written = unchanged = 0
         for name in manifest:
             src, dst = stage / name, dest / name

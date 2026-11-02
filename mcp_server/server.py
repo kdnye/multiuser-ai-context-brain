@@ -310,8 +310,11 @@ def _http_app():
     install_json_logging()
     app = mcp.streamable_http_app()
     app.router.routes.append(Route(DISCOVERY, protected_resource))
-    app.add_middleware(EntraGate, validator=EntraValidator(tenant, audiences, domains),
-                       resource_metadata_url=f"{public_url}{DISCOVERY}")
+    validator = EntraValidator(tenant, audiences, domains)
+    required_role = (os.environ.get("BRAIN_REQUIRED_ROLE") or "").strip()
+    if required_role:        # optional defence in depth: demand this app role in every token (see README configuration)
+        validator.required_role = required_role
+    app.add_middleware(EntraGate, validator=validator, resource_metadata_url=f"{public_url}{DISCOVERY}")
     app.add_middleware(RequestLogMiddleware)
     return app
 

@@ -32,7 +32,10 @@ def main(argv: list[str] | None = None, backend_factory=None) -> int:
         p.add_argument("--bucket", required=True)
         p.add_argument("--prefix", required=True)
         p.add_argument("--dest", required=True)
-    vf = sub.add_parser("verify", help="check a pulled folder against its manifest")
+        if name == "vault":
+            p.add_argument("--dry-run", action="store_true", help="report what would be written and removed, change nothing")
+            p.add_argument("--force", action="store_true", help="mirror even if the destination looks unrelated to the bucket")
+    vf =sub.add_parser("verify", help="check a pulled folder against its manifest")
     vf.add_argument("--dest", required=True)
     lt = sub.add_parser("lint", help="health checks on a silo folder (links, orphans, frontmatter, owners, review dates)")
     lt.add_argument("--wiki", required=True)
@@ -60,7 +63,11 @@ def main(argv: list[str] | None = None, backend_factory=None) -> int:
     elif args.cmd == "pull":
         r = pull(backend, Path(args.dest))
     else:
-        r = vault(backend, Path(args.dest))
+        try:
+            r = vault(backend, Path(args.dest), dry_run=args.dry_run, force=args.force)
+        except RuntimeError as exc:
+            print(f"vault refused: {exc}", file=sys.stderr)
+            return 2
     print(json.dumps(r, indent=1))
     return 0
 

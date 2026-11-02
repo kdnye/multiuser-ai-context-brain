@@ -14,13 +14,26 @@ from collections import Counter
 # Every quantifier is bounded (RFC limits: local part 64, label 63), so a long run with no "@" costs at most 64 steps
 # per start position: linear, not quadratic (a 128 KB run of "a" took 56 s with the unbounded form).
 _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9\-]{1,63}(?:\.[A-Za-z0-9\-]{1,63}){0,20}\.[A-Za-z]{2,24}")
-_PHONE = re.compile(r"(?<![\d.])(?:\+?1[\s.\-]?)?(?:\(\d{3}\)[\s.\-]?|\d{3}[\s.\-])\d{3}[\s.\-]\d{4}(?![\d])")
-_SSN = re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)")
+# "-" also as en/em dash, and up to two separator characters ("555  123  4567"); "(555)123-4567" needs none after ")".
+_PHONE = re.compile(r"(?<![\d.])(?:\+?1[\s.\-–—]?)?(?:\(\d{3}\)[\s.\-–—]{0,2}|\d{3}[\s.\-–—]{1,2})\d{3}[\s.\-–—]{1,2}\d{4}(?![\d])")
+# 123-45-6789, and the same with one repeated space or dot ("123 45 6789", "123.45.6789"); a bare nine digits only
+# when labelled, since an unlabelled nine-digit number is as likely an order or tracking number.
+_SSN = re.compile(r"(?<!\d)\d{3}([-\s.])\d{2}\1\d{4}(?!\d)")
+_SSN_LABELLED = re.compile(r"(?i)\b(ssn|social\s+security(?:\s+(?:number|no\.?|#))?)\b([^\d]{0,15}?)(\d{9})(?!\d)")
+# Credentials: well-known token prefixes, PEM private keys, bearer tokens and "password = value" style assignments.
+_TOKEN = re.compile(r"\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}"
+                    r"|ya29\.[A-Za-z0-9_\-]{20,}|sk-[A-Za-z0-9_\-]{20,})(?![A-Za-z0-9_])")
+_PEM = re.compile(r"-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----(?:\r?\n[A-Za-z0-9+/=]{16,100}){0,80}")
+_BEARER = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=\-]{20,}")
+_SECRET_LABEL = re.compile(r"(?i)\b(pass(?:word|wd)?|pwd|secret|api[_\- ]?key|access[_\- ]?key|client[_\- ]?secret|auth[_\- ]?token|token)\b(\s{0,3}[:=]\s{0,3}[\"']?)([^\s\"',;]{6,100})")
+_ZERO_WIDTH = re.compile("[\u200b‌⁠﻿]")
+_FULLWIDTH = re.compile("[！-～]")
 _LABELLED = re.compile(r"(?i)\b(routing|account|acct|aba|member|group|policy|subscriber|claim|mrn|patient|chart)\b([^\n\d]{0,30}?)(\d[\d \-]{6,}\d)")
 _CARD = re.compile(r"(?<!\d)(?:\d[ \-]?){13,19}(?!\d)")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 # A labelled birth date; the label stays, the date goes. Other dates are kept.
-_DOB = re.compile(r"(?i)\b(date\s+of\s+birth|birth\s*date|birthday|d\.?o\.?b\.?)\b([^\n\d]{0,15}?)(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}|[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4})")
+_DOB = re.compile(r"(?i)\b(date\s+of\s+birth|birth\s*date|birthday|born(?:\s+on)?|d\.?o\.?b\.?)\b([^\d]{0,15}?)"
+                  r"(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}|[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+[A-Za-z]{3,9}\.?,?\s+\d{4})")
 
 # Shared mailboxes are operational knowledge, not personal contact details.
 ROLE_LOCALPARTS = frozenset({
@@ -74,8 +87,23 @@ def scrub(text: str, keep_emails: bool = False, keep_phones: bool = False) -> tu
             return repl
         return f
 
+    def secret_label(m):
+        value = m.group(3)
+        if len(value) < 12 and not re.search(r"\d", value):      # "password: required" is prose, "password=Hunter2" is not
+            return m.group(0)
+        counts["secret"] += 1
+        return f"{m.group(1)}{m.group(2)}{{secret}}"
+
+    # Invisible characters and full-width forms (an "＠" or a zero-width space inside a number) must not hide a value.
+    text = _ZERO_WIDTH.sub("", text)
+    text = _FULLWIDTH.sub(lambda m: chr(ord(m.group(0)) - 0xFEE0), text)
+    text = _PEM.sub(simple("secret", "{secret}"), text)
+    text = _TOKEN.sub(simple("secret", "{secret}"), text)
+    text = _BEARER.sub(simple("secret", "Bearer {secret}"), text)
+    text = _SECRET_LABEL.sub(secret_label, text)
     text = _EMAIL.sub(email, text)
     text = _SSN.sub(simple("ssn", "{ssn}"), text)
+    text = _SSN_LABELLED.sub(lambda m: (counts.update(["ssn"]), f"{m.group(1)}{m.group(2)}{{ssn}}")[1], text)
     text = _DOB.sub(lambda m: (counts.update(["dob"]), f"{m.group(1)}{m.group(2)}{{dob}}")[1], text)
     text = _CARD.sub(card, text)
     text = _LABELLED.sub(labelled, text)

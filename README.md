@@ -89,6 +89,9 @@ Every variable the code reads. The hosted service refuses to start if a required
 | `BRAIN_SHARED_EDITOR_ROLE` | both | no | The role that may write `shared` (default `shared-editor`) |
 | `BRAIN_NAME` | both | no | Display name in the server instructions (default `Context Brain`) |
 | `BRAIN_SERVER_NAME` | both | no | MCP server name (default `context-brain`) |
+| `BRAIN_MAX_PAGES` | both | no | Page limit per silo (default 5000). A new page past it is refused; edits still work |
+| `BRAIN_MAX_SILO_BYTES` | both | no | Size limit per silo, in characters of page text (default 40,000,000). A cached page costs about 10x its size in memory, so size this to the instance (a 512 MiB instance holds roughly 40 MB) |
+| `BRAIN_REQUIRED_ROLE` | http | no | An app role every token must carry (for example `brain-user`). Off by default; turn it on as defence in depth in case Entra's "Assignment required" setting is ever disabled |
 | `BRAIN_GCS_TOKEN` | tools | no | An OAuth access token for the operator CLI (`gcloud auth print-access-token`); otherwise application default credentials |
 | `PORT` | http | no | Listen port (default 8080; Cloud Run sets it) |
 
@@ -110,6 +113,7 @@ silo only.
 | Monthly | Pull each silo you administer and lint it: `python -m tools.wiki pull --bucket <BUCKET> --prefix silos/<silo> --dest <folder>`, then `python -m tools.wiki lint --wiki <folder>` (exit 1 when there are findings; fix broken links, orphans, `missing_owner`, `bad_review_by`, `review_overdue`) |
 | Before a secret expires | Rotate the AI client's OAuth secret in Entra and re-enter it in the product (deploy/connectors.md) |
 | Backup / restore | The bucket is versioned; `python -m tools.wiki pull` for an offline copy; restore steps in deploy/README.md |
+| Mirroring a silo to Obsidian | `python -m tools.wiki vault --bucket <BUCKET> --prefix silos/<silo> --dest <vault> [--dry-run]`. It deletes `.md` files in `--dest` that are not in the bucket, so it refuses an empty bucket listing and a folder that shares no page with the bucket (`--force` overrides the second; `--dry-run` shows the changes first) |
 | Upgrading `mcp` | It is pinned below 2.0 on purpose (2.0 renamed FastMCP); test before raising the pin |
 
 Keeping your organisation's identifiers out of a fork: list them, one per line, in the git-ignored

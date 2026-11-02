@@ -13,7 +13,9 @@ from pathlib import Path
 
 FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 # A backslash before | is the Obsidian escape inside a markdown table ([[path\|Title]]); it is not part of the path.
-LINK = re.compile(r"\[\[([^\]|#\\]+)(?:\\?#[^\]|]*)?(?:\\?\|[^\]]*)?\]\]")
+# Every group is bounded and cannot contain "[" or a newline: with unbounded groups an unclosed "[[a[[a[[a..." made each
+# "[[" scan to the end of the text and backtrack, so a 12 KB page cost seconds and a 200 KB page minutes (quadratic).
+LINK = re.compile(r"\[\[([^\[\]|#\\\n]{1,200})(?:\\?#[^\]|\n]{0,200})?(?:\\?\|[^\]\n]{0,300})?\]\]")
 REQUIRED = ("title", "type", "scope", "source_ids", "updated")
 SCOPES = {"personal", "work", "unscoped"}
 SPECIAL = {"index.md", "log.md"}
@@ -37,7 +39,9 @@ def parse_frontmatter(text: str) -> dict:
     m = FRONTMATTER.match(text)
     out: dict = {}
     if m:
-        for line in m.group(1).splitlines():
+        # Split on "\n" only: str.splitlines() also splits on U+2028, U+2029 and U+0085, and a title containing one
+        # (the JSON escape is stored raw) turned into extra frontmatter keys.
+        for line in m.group(1).split("\n"):
             key, _, raw = line.partition(": ")
             try:
                 out[key.strip()] = json.loads(raw)

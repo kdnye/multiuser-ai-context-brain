@@ -15,6 +15,7 @@ import datetime as dt
 import difflib
 import hashlib
 import math
+import os
 import re
 import threading
 from collections import Counter
@@ -42,6 +43,13 @@ PATH = re.compile(r"(?:" + "|".join(SECTIONS) + r")/[a-z0-9][a-z0-9-]{0,120}")
 SOURCE_ID = re.compile(r"[A-Za-z0-9:/._@-]{1,200}")
 MAX_BYTES = 200_000                     # every stored page: write, append, and each page ingest_session creates
 MAX_FM_DEPTH = 6
+FM_KEY = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,40}")      # a frontmatter key is a plain identifier, never free text
+# Query caps: close_titles runs difflib for every term against every title word, so cost grew with query length.
+MAX_QUERY, MAX_QUERY_TERMS = 300, 12
+# Per-silo quotas. A cached page costs about 10x its size in memory (text, lowercase copy, token counts), and the hosted
+# service is one small instance, so one silo must not be able to exhaust it. Override with BRAIN_MAX_PAGES and
+# BRAIN_MAX_SILO_BYTES; the defaults suit a few thousand pages on a 512 MiB instance.
+DEFAULT_MAX_PAGES, DEFAULT_MAX_SILO_BYTES = 5_000, 40_000_000
 START = "reference/start-here"
 PEOPLE_HUB = "reference/people"
 AREA_PREFIX = "reference/area-"
@@ -52,6 +60,29 @@ LOG_HEADER = '---\ntitle: "Log"\ntype: "log"\n---\n\n# Log\n\nAppend-only.\n'
 # Frontmatter fields that name what a page IS; a query term found here counts like a title match (search ranking).
 KEY_FIELDS = ("title", "aliases", "nickname", "role", "org", "tags")
 _WORD = re.compile(r"[a-z0-9]+")
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name) or default))
+    except ValueError:
+        return default
+
+
+def _clean(text) -> str:
+    """A caller-supplied name or title as it will be STORED (scrubbed, trimmed). Slugs and title matching use this, so a
+    phone number in a title never reaches a page path, the index or the log, and the same title finds its own page."""
+    return scrub(text if isinstance(text, str) else "")[0].strip()
+
+
+_LIVE_BLOCK = re.compile(r"\n---\n\n## (?:Everything for this role|Tasks) \(live: ")
+
+
+def _strip_live_blocks(content: str) -> str:
+    """Cut the computed lists wiki_read appends (role portal, project and session task lists). Writing a page back as
+    read stored them as static text, and every round trip added another stale copy."""
+    m = _LIVE_BLOCK.search(content)
+    return content if m is None else content[: m.start()].rstrip("\n") + "\n"
 
 
 def _norm(token: str) -> str:
@@ -76,6 +107,8 @@ class Wiki:
         self._personal = personal        # a user's own silo: their person pages may keep phone numbers (never shared or role silos)
         self._meta_cache: dict[str, tuple[str, dict]] = {}
         self._deferred: list[tuple[str, str, str]] | None = None   # (kind, page, summary) while a batch defers bookkeeping
+        self._max_pages = _env_int("BRAIN_MAX_PAGES", DEFAULT_MAX_PAGES)
+        self._max_bytes = _env_int("BRAIN_MAX_SILO_BYTES", DEFAULT_MAX_SILO_BYTES)
 
     @property
     def store(self) -> Store:
@@ -112,10 +145,15 @@ class Wiki:
         return meta
 
     # --- paths ---------------------------------------------------------------------------
+    @staticmethod
+    def normalize_path(page) -> str:
+        """The path a request names, normalized the way every tool does (the audit log records this, not the spelling)."""
+        raw = page if isinstance(page, str) else ""
+        return raw.strip(" \t").replace("\\", "/").lstrip("/").removesuffix(".md")
+
     def _page(self, page: str) -> tuple[str, str]:
         """(page path, store name) for a request, or a WikiError."""
-        raw = page if isinstance(page, str) else ""
-        p = raw.strip(" \t").replace("\\", "/").lstrip("/").removesuffix(".md")
+        p = self.normalize_path(page)
         if p not in ("index", "log") and not PATH.fullmatch(p):
             raise WikiError(f"bad page path {page!r}: use section/slug with a section in {', '.join(SECTIONS)}, lowercase letters, digits and hyphens")
         return p, f"{p}.md"
@@ -130,16 +168,24 @@ class Wiki:
 
     # --- reading -------------------------------------------------------------------------
     def read(self, page: str) -> str:
+        return self.read_with_revision(page)[0]
+
+    def read_with_revision(self, page: str) -> tuple[str, str]:
+        """(text as shown, revision) from ONE read of the stored page. wiki_read used to read the page and then ask for
+        its revision separately, so a write between the two returned old text with the new revision, and a following
+        wiki_write(expected_revision=...) then overwrote that concurrent change. The revision is of the stored text
+        (live portal and task lists added on read are not part of it)."""
         p, name = self._page(page)
-        text = self.store.read(name)
-        if text is None:
+        stored = self.store.read(name)
+        if stored is None:
             raise WikiError(f"no such page: {p}")
+        text = stored
         if p.startswith(employee.ROLES + "/"):
             text = text.rstrip("\n") + "\n" + employee.portal_block(self, p)
-        page_type = self._meta(name)["fm"].get("type")
+        page_type = parse_frontmatter(stored).get("type")
         if page_type in ("project", "session"):
             text = text.rstrip("\n") + "\n" + records.live_block(self, p, page_type)
-        return text
+        return text, hashlib.sha256(stored.encode("utf-8")).hexdigest()[:12]
 
     def index_view(self, section: str | None = None, offset: int = 0, limit: int = 300) -> str:
         """A table of contents (section names and counts), or one section's catalog, `limit` entries at a time from
@@ -221,7 +267,8 @@ class Wiki:
         a page matches when its activity date is that day, a dated event on it is that day, or its text contains the
         date. Extra words narrow the matches; if they would remove every one, the date-only matches are returned with
         a note saying so. Only a date with no match at all says "No entries" (plus the wiki's date coverage)."""
-        wanted = dates.ISO.findall(query or "")
+        query = (query or "")[:MAX_QUERY]
+        wanted = dates.ISO.findall(query)
         if not wanted:
             return {"results": self.search(query, limit)}
         rest = dates.ISO.sub(" ", query).strip()
@@ -284,6 +331,7 @@ class Wiki:
         return {"entries": found[-n:], "truncated": len(found) > n}
 
     def search(self, query: str, limit: int = 10) -> list[dict]:
+        query = (query or "")[:MAX_QUERY]
         terms = [t for t in re.split(r"[^a-z0-9]+", query.lower()) if len(t) >= 2 and t not in STOPWORDS] or \
                 [t for t in re.split(r"[^a-z0-9]+", query.lower()) if len(t) >= 2]
         if not terms:
@@ -371,7 +419,8 @@ class Wiki:
     def context(self, topic: str, limit: int = 5, neighbours: int = 5) -> dict:
         """One-call recall for a topic: the best-matching pages, each with a few neighbours, so an agent can see
         what the wiki already knows (and how it connects) before answering or writing."""
-        if dates.ISO.search(topic or ""):          # a date in the topic is an exact-date lookup, not loose terms
+        topic = (topic or "")[:MAX_QUERY]
+        if dates.ISO.search(topic):          # a date in the topic is an exact-date lookup, not loose terms
             r = self.search_view(topic, limit)
             out = []
             for h in r["results"]:
@@ -406,7 +455,8 @@ class Wiki:
     def close_titles(self, query: str, limit: int = 5) -> list[dict]:
         """Pages whose title words are close spellings of the query words (difflib ratio >= 0.75), for names and
         terms typed or heard slightly wrong. Titles only, so it stays cheap and precise."""
-        terms = [t for t in re.split(r"[^a-z0-9]+", query.lower()) if len(t) >= 3 and t not in STOPWORDS]
+        terms = [t for t in re.split(r"[^a-z0-9]+", (query or "")[:MAX_QUERY].lower()) if len(t) >= 3 and t not in STOPWORDS]
+        terms = list(dict.fromkeys(terms))[:MAX_QUERY_TERMS]
         if not terms:
             return []
         by_word: dict[str, set[str]] = {}
@@ -508,11 +558,17 @@ class Wiki:
             raise WikiError(f"page too large (limit {MAX_BYTES} bytes)")
         if not FRONTMATTER.match(content):
             raise WikiError("page must start with YAML frontmatter (--- ... ---)")
+        content = _strip_live_blocks(content)          # a page read earlier carries computed lists; never store them
         fm = parse_frontmatter(content)
         missing = [k for k in REQUIRED if k not in fm and k != "updated"]
         if missing:
             raise WikiError(f"frontmatter is missing: {', '.join(missing)}")
-        if fm["scope"] not in SCOPES:
+        # Types first: a title that is a number or a list was stored, then crashed every later index rebuild in the silo.
+        if not isinstance(fm["title"], str) or not fm["title"].strip():
+            raise WikiError("title must be a non-empty string")
+        if "type" in fm and not isinstance(fm["type"], str):
+            raise WikiError("type must be a string")
+        if not isinstance(fm["scope"], str) or fm["scope"] not in SCOPES:
             raise WikiError(f"scope must be one of {sorted(SCOPES)}")
         if not isinstance(fm["source_ids"], list):
             raise WikiError("source_ids must be a list (use e.g. [\"claude-session:2026-10-27\"] for new knowledge)")
@@ -555,6 +611,7 @@ class Wiki:
         text = frontmatter(fm) + clean_body.lstrip("\n")
         if len(text.encode("utf-8")) > MAX_BYTES:       # the one place every stored page passes, whoever built it
             raise WikiError(f"page {p} would exceed {MAX_BYTES} bytes; split it into linked pages")
+        self._check_quota(existed, prior, text)
         self.store.write(name, text)
         warnings = [f"link to a page that does not exist: [[{t}]]" for t in dict.fromkeys(m.group(1).strip() for m in LINK.finditer(clean_body))
                     if not self._exists(t)]
@@ -565,6 +622,18 @@ class Wiki:
             self.rebuild_index()
             self._log("update" if existed else "create", p, summary)
         return {"path": p, "action": "updated" if existed else "created", "warnings": warnings, "scrubbed": dict(counts)}
+
+    def _check_quota(self, existed: bool, prior: str | None, text: str) -> None:
+        """Refuse a NEW page past the page limit, and any write that grows the silo past the byte limit. Updates that
+        keep or shrink a page always pass, so a full silo can still be edited and tidied."""
+        content = [name for p, name in self._all() if not self._generated(p)]      # the index, log and hubs do not count
+        if not existed and len(content) >= self._max_pages:
+            raise WikiError(f"this silo has reached its page limit ({self._max_pages} pages); merge or remove pages before adding more")
+        growth = len(text) - len(prior or "")
+        if growth > 0:
+            total = sum(len(self.store.read(n) or "") for n in content)
+            if total + growth > self._max_bytes:
+                raise WikiError(f"this silo would pass its size limit ({self._max_bytes:,} characters of pages); merge or remove pages first")
 
     @staticmethod
     def _scrub_frontmatter(fm: dict, keep_emails: bool, keep_phones: bool = False) -> tuple[dict, Counter]:
@@ -582,11 +651,17 @@ class Wiki:
             if isinstance(v, list):
                 return [walk(x, depth + 1) for x in v]
             if isinstance(v, dict):
+                for k in v:
+                    # Keys are stored verbatim like values are scrubbed: a key is a label, never a place for contact details.
+                    if not isinstance(k, str) or len(k) > 80 or any(scrub(k)[1].values()):
+                        raise WikiError("a frontmatter key may not contain an email, phone or ID number")
                 return {k: walk(x, depth + 1) for k, x in v.items()}
             return v
 
         out = {}
         for k, v in fm.items():
+            if not (isinstance(k, str) and FM_KEY.fullmatch(k)):
+                raise WikiError(f"bad frontmatter key {str(k)[:40]!r}: use letters, digits, - and _ (up to 41 characters)")
             if k == "source_ids":
                 if not isinstance(v, list):
                     raise WikiError("source_ids must be a list")
@@ -609,8 +684,11 @@ class Wiki:
         if not entries:
             return
         old = self.store.read("log.md") or LOG_HEADER
-        # One entry per line: a caller-supplied summary with line breaks could otherwise forge extra log entries.
-        self.store.write("log.md", old + "".join(f"\n## [{self._today()}] {k} | {p} — {' '.join(str(s).split())[:200]}\n" for k, p, s in entries))
+        # One entry per line (a summary with line breaks could forge extra log entries), and scrubbed: the log is
+        # readable through wiki_log, and a summary is free text like a page body.
+        def line(s) -> str:
+            return scrub(" ".join(str(s).split())[:200])[0]
+        self.store.write("log.md", old + "".join(f"\n## [{self._today()}] {k} | {p} — {line(s)}\n" for k, p, s in entries))
 
     def rebuild_index(self) -> None:
         self._rebuild_hubs()          # hubs first, so the index lists them
@@ -822,7 +900,7 @@ class Wiki:
             scrubbed.update(result.get("scrubbed") or {})
 
         for proj in payload.get("projects") or []:
-            name = (proj.get("name") or "").strip()
+            name = _clean(proj.get("name"))
             if name and name.lower() not in projects:
                 path = self._unique("projects", slugify(name))
                 scope = "personal" if proj.get("type") == "Personal" else "work"
@@ -843,7 +921,7 @@ class Wiki:
             return parse_frontmatter(self.store.read(f"{path}.md") or "").get("scope", "unscoped") if path else "unscoped"
 
         for n in payload.get("notes") or []:
-            ntitle = (n.get("title") or "").strip()
+            ntitle = _clean(n.get("title"))      # the stored title is scrubbed, so match and slug on the scrubbed one
             if not ntitle:
                 continue
             path, old = self._note_page(ntitle)
@@ -859,7 +937,7 @@ class Wiki:
                                  body, f"new note from session {date}"))
 
         concerning = s.get("concerning")
-        path = self._unique("sessions", slugify(f"{date} {concerning or title}"))
+        path = self._unique("sessions", slugify(_clean(f"{date} {concerning or title}")))
         parts = [s["summary"].strip(), ""]
         related = [x for x in [concerning, *(s.get("cross_related_projects") or [])] if x]
         if related:
@@ -891,8 +969,9 @@ class Wiki:
         existing = {records.TASK_TYPE: {}, records.NEED_TYPE: {}}
         for p, name in self._all():
             m = self._meta(name)
-            if m["fm"].get("type") in existing:
-                existing[m["fm"]["type"]][m["title_low"].strip()] = (p, name)
+            rtype_ = m["fm"].get("type")
+            if isinstance(rtype_, str) and rtype_ in existing:      # a page with an unhashable type must not break ingest
+                existing[rtype_][m["title_low"].strip()] = (p, name)
         out = {"created": [], "updated": [], "links": [], "dropped": [], "tasks": 0, "future_needs": 0, "scrubbed": Counter()}
         specs = [(records.TASK_TYPE, records.TASKS, "session", payload.get("tasks") or [],
                   lambda t: {"title": t.get("task"), "status": t.get("status"), "priority": t.get("priority"), "kind": t.get("type"),
@@ -903,7 +982,7 @@ class Wiki:
         for rtype, section, srel, items, norm in specs:
             for raw in items:
                 d = norm(raw)
-                title = (d.get("title") or "").strip()
+                title = _clean(d.get("title"))
                 if not title:
                     continue
                 out["tasks" if rtype == records.TASK_TYPE else "future_needs"] += 1
