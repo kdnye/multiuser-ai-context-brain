@@ -33,8 +33,14 @@ saves a short profile to your own private area after you confirm it.
 
 ## Step 0: check
 
-`wiki_read("reference/profile")` (own area). If it exists and the user did not ask to redo it, show it and ask
-"anything to change?" instead of re-interviewing.
+`wiki_read("reference/profile")` (own area) and check its frontmatter `type`.
+
+- Exists with `type: "profile"` and the user did not ask to redo it: show it and ask "anything to change?"
+  instead of re-interviewing.
+- Exists with any other `type`: it is not a profile yet. The server reports `onboarded: false` for it and will
+  keep doing so until the type is `profile`. Show the user what is there, offer to turn it into their profile,
+  ask only for what is missing from the ten questions in Step 1, and save it in Step 3 with `type: "profile"`.
+- Does not exist: run the interview.
 
 ## Step 1: the interview (10 questions)
 
@@ -79,9 +85,10 @@ If yes:
 
 Show the full profile and ask "Is this right? Say yes to save it, or tell me what to change." Save only after an
 explicit yes; if they ask for changes, apply them and ask again. Then:
-`wiki_write("reference/profile", <page>, "onboarding: profile")` in the user's own area. If Step 0 found an
-existing profile, pass its `revision` as `expected_revision`; on `revision_conflict`, re-read, merge the
-user's new answers into the latest version, show it, and confirm again. Page frontmatter:
+`wiki_write("reference/profile", <page>, "onboarding: profile")` in the user's own area. If Step 0 found a page
+at that path (a profile, or one with another type), pass its `revision` as `expected_revision`; on
+`revision_conflict`, re-read, merge the user's new answers into the latest version, show it, and confirm again.
+After the write, `wiki_read("reference/profile")` and confirm it has `type: "profile"`. Page frontmatter:
 
 ```
 ---

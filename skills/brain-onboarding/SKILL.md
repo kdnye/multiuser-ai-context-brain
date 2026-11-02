@@ -1,6 +1,6 @@
 ---
 name: brain-onboarding
-description: First-run setup for the context brain - "How do you want your brain to work for you?". Use when a user connects the brain for the first time, when their silo has no reference/profile page, or when they say "redo onboarding", "show my brain settings" or "change how you answer me". Loads the master interview script from the brain and follows it.
+description: First-run setup for the context brain - "How do you want your brain to work for you?". Use when a user connects the brain for the first time, when wiki_context says `onboarded: false` (no reference/profile page of type profile), or when they say "redo onboarding", "show my brain settings" or "change how you answer me". Loads the master interview script from the brain and follows it.
 ---
 
 # Brain onboarding
