@@ -42,8 +42,10 @@ Rules every change and every deployment follows. Numbered so reviews and pages c
     `gitleaks detect --no-git --source .`. The repo ships no CI workflows; contributors run the checks locally and
     paste the results in the PR (a maintainer may add CI later).
 13. Measure before changing search: run `python -m tools.eval_recall` before and after, and report both.
-13a. Engine changes land in this (canonical) repo first. Each fork tracks drift with an `engine-sync.json` manifest checked
-     by `python -m tools.port_check` and ports changes by the checklist in docs/PORTING.md.
+
+**13a.** Engine changes land in this (canonical) repo first. Each fork tracks drift with an `engine-sync.json` manifest
+checked by `python -m tools.port_check` and ports changes by the checklist in docs/PORTING.md. An unreviewed
+divergence is a FAIL, not a note.
 
 ## Look and feel (pages and answers)
 14. **Plain English, short sentences, active voice.** Write for a busy colleague: the answer first, then the why.
