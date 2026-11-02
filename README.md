@@ -25,12 +25,13 @@ verified. See [docs/roadmap.md](docs/roadmap.md).
 | `tools/seed.py` | Builds a silo folder from reviewed pages through the engine |
 | `tools/release_check.py` | Public-release gate: blocks private identifiers and real email addresses |
 | `tools/eval_recall.py` | Retrieval regression check (hit@k, MRR) |
+| `tools/port_check.py` | Shows how far a fork's copy of the engine has drifted from this repo ([docs/PORTING.md](docs/PORTING.md)) |
 | `examples/seed/shared/` | A fictional "Example Co" shared silo: role portals, getting-started tutorial, connector how-to, onboarding interview, silo reference |
 | `templates/employee/` | Starter page per employee section (tutorial, how-to, reference, explanation, app, dashboard, role) |
 | `.claude/commands/` | Claude Code slash commands: `/query`, `/save`, `/ingest`, `/lint` |
 | `skills/brain-onboarding/` | A thin skill that runs the onboarding interview stored in the shared silo |
 | `deploy/` | Cloud Run + Cloud Storage runbook and the Entra/connector setup with lessons learned |
-| `docs/` | Concepts, session capture, document intake, roadmap |
+| `docs/` | Concepts, session capture, document intake, porting to forks, roadmap |
 | `tests/` | About 260 tests, including every access-deny path and adversarial-input timing |
 
 ## Quick start: run it locally (10 minutes, no cloud)
@@ -114,6 +115,7 @@ silo only.
 | Before a secret expires | Rotate the AI client's OAuth secret in Entra and re-enter it in the product (deploy/connectors.md) |
 | Backup / restore | The bucket is versioned; `python -m tools.wiki pull` for an offline copy; restore steps in deploy/README.md |
 | Mirroring a silo to Obsidian | `python -m tools.wiki vault --bucket <BUCKET> --prefix silos/<silo> --dest <vault> [--dry-run]`. It deletes `.md` files in `--dest` that are not in the bucket, so it refuses an empty bucket listing and a folder that shares no page with the bucket (`--force` overrides the second; `--dry-run` shows the changes first) |
+| Fork drift | `python -m tools.port_check --brain <fork>` lists engine files a fork must port or has changed; steps in [docs/PORTING.md](docs/PORTING.md). Engine changes land here first |
 | Upgrading `mcp` | It is pinned below 2.0 on purpose (2.0 renamed FastMCP); test before raising the pin |
 
 Keeping your organisation's identifiers out of a fork: list them, one per line, in the git-ignored

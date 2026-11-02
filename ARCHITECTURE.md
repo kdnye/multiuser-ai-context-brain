@@ -204,3 +204,15 @@ step 5). Another backend (S3, Azure Blob, a database) needs only the three `Back
 `python -m tools.wiki push|pull|vault` act on ONE silo (`--prefix silos/<silo>`); `verify` (`--dest`) and `lint`
 (`--wiki`) work on a local folder. There is no cross-silo operator command. `python -m tools.seed` builds a silo from
 reviewed pages through the engine before `push`. `vault` writes a silo as an Obsidian vault for read-only browsing.
+
+`python -m tools.port_check --brain <fork>` compares a fork's copies of the engine files (listed in
+`tools/engine_files.txt`) with this repo through git and prints one PASS / FAIL / NOT COVERED row per file (exit 2 =
+COULD NOT RUN). It reads the fork's `engine-sync.json`; `--init`, `--accept` and `--set-base` maintain that manifest.
+It reads files as data and never executes them, and reads upstream at its committed HEAD only.
+
+### Forks and drift control
+This repo is canonical. A fork keeps a manifest of how each engine file stands: `synced` (equal to this repo at
+`base_commit`), `diverged` (different, pinned by sha256 with a reason; FAILs until a person reviews it with `--accept`), `owned` (a policy file the fork owns,
+never compared) or `absent`. Files are compared with CRLF normalised to LF. A change here makes every `synced` file it
+touches report `NEEDS PORT` until the fork ports it and moves `base_commit` with `--set-base`. There are no equations;
+the only computation is the sha256 of the normalised file. Procedure: [docs/PORTING.md](docs/PORTING.md).

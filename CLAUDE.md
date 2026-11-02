@@ -19,6 +19,8 @@ Read first: `README.md` (run, configure, maintain), `ARCHITECTURE.md` (silos, id
 - Docs change in the same PR as the code (STANDARDS 11).
 - Before every commit: `python -m pytest`, `ruff check .`, `python -m tools.release_check`,
   `gitleaks detect --no-git --source .`.
+- Engine changes land in this repo first and are ported to forks by the checklist in docs/PORTING.md; forks track drift
+  with `python -m tools.port_check`. Never fix the engine only in a fork.
 - Measure search changes with `python -m tools.eval_recall` before and after.
 - git: commit and push as separate commands; never push to `main`; PRs only.
 - Cloud: attended only; env changes with `--update-*` flags, never `--set-env-vars`; max-instances stays 1.
