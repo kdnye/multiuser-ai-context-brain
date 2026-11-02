@@ -59,6 +59,9 @@ class Brain:
             return self._wikis[silo]
 
     def _check(self, identity: Identity, silo: str | None, write: bool, action: str, path: str = "") -> str:
+        # Audit the path as the tools will read it (leading slash, backslashes, ".md" and spaces normalized), not the
+        # caller's spelling: otherwise a valid page read through " reference/x.md" was logged as "<invalid>".
+        path = Wiki.normalize_path(path)
         try:
             s = resolve(identity, silo)
         except PermissionError:
@@ -75,8 +78,8 @@ class Brain:
     # --- reads ---------------------------------------------------------------------------------
     def read(self, identity: Identity, path: str, silo: str | None = None) -> dict:
         s = self._check(identity, silo, False, "read", path)
-        w = self._wiki(s)
-        return {"silo": s, "path": path, "content": w.read(path), "revision": w.revision(path)}
+        content, revision = self._wiki(s).read_with_revision(path)      # one snapshot: text and revision cannot disagree
+        return {"silo": s, "path": path, "content": content, "revision": revision}
 
     def index(self, identity: Identity, silo: str | None = None, section: str | None = None, offset: int = 0, limit: int = 300) -> dict:
         s = self._check(identity, silo, False, "index", section or "")

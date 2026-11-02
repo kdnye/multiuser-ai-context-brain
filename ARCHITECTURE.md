@@ -170,8 +170,27 @@ step 5). Another backend (S3, Azure Blob, a database) needs only the three `Back
   audit lines log a caller's path or silo only when it is slug-like, otherwise `<invalid>`, and a slug that spells a
   phone number or SSN (`PII_SHAPED` in `router.py`) is logged as `<redacted>`; `wiki_log` is clamped
   to 200 entries. `source_ids` that the scrubber would change (email, phone, ID number) are refused.
+- **Round three (adversarial review):**
+  - *Regexes:* the wikilink and summary regexes were quadratic on unclosed `[[` (a 12 KB page cost seconds, a 200 KB page
+    minutes, and the page persisted in the bucket); every group is now bounded and cannot contain `[` or a newline.
+  - *Poison pages:* `title`, `type` and `scope` must be strings, validated before the page is stored (a numeric title
+    used to be stored and then broke every later index rebuild in that silo); frontmatter keys must be plain
+    identifiers and nested keys are scrubbed.
+  - *Scrubber:* also catches separator variants, full-width and zero-width tricks, labelled SSNs, more birth-date
+    forms and common credentials (token prefixes, private-key headers, `password=` assignments). Log summaries and
+    the titles that become slugs are scrubbed too. It stays a backstop; unlabelled digit runs are left alone on purpose.
+  - *Reads:* `wiki_read` takes content and revision from one read; computed lists (role portal, project and session
+    task lists) are cut when a read page is written back; frontmatter is split on `\n` only (U+2028 injected keys).
+  - *Limits:* queries are capped at 300 characters and 12 fuzzy terms; each silo has a page and a size quota
+    (`BRAIN_MAX_PAGES`, `BRAIN_MAX_SILO_BYTES`) because one user could otherwise exhaust the single instance's memory.
+  - *Identity:* an email with more than one `@` is refused; `BRAIN_REQUIRED_ROLE` optionally demands an app role.
+  - *Audit:* the normalized path is logged, not the caller's spelling.
+  - *Known limits, not fixed:* `log.md` and `index.md` are rewritten whole on every write and grow with history; a
+    rolling deploy can briefly run two instances against the single-writer assumption (storage has no generation
+    precondition); dependencies are pinned by range, not by hash.
 - **Operator tools:** `pull` refuses object names that would land outside the destination; `verify` fails on extra
-  pages (dot-folders such as `.obsidian/` excepted).
+  pages (dot-folders such as `.obsidian/` excepted); `vault` refuses an empty bucket listing and a destination with no
+  page in common with the bucket, and has `--dry-run`.
 - **Errors:** wiki and access refusals come back as data; anything else returns `{"error": "internal error"}` and
   logs only the exception type and tool name.
 - **Open: prompt-injected writes.** Text ingested into a person's own silo can steer a session that holds

@@ -1,7 +1,9 @@
-# Held at 1.x deliberately: mcp 2.0 renamed FastMCP.
-mcp>=1.28.1,<2
+# Held at 1.x deliberately: mcp 2.0 renamed FastMCP. 1.30 is the version whose 4 MB request-body cap was verified.
+mcp>=1.30,<2
 # Hosted service: Entra ID token verification, Cloud Storage store, ASGI server.
-PyJWT[crypto]>=2.8,<3
+# PyJWT 2.15 is the version whose JWKS refresh cooldown (a flood of unknown key ids does not hammer the identity
+# provider) was verified; older 2.x refetches per unknown kid.
+PyJWT[crypto]>=2.15,<3
 google-cloud-storage>=2.18,<4
 uvicorn>=0.30,<1
 anyio>=4.4,<5
