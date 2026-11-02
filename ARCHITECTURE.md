@@ -179,6 +179,10 @@ step 5). Another backend (S3, Azure Blob, a database) needs only the three `Back
   - *Scrubber:* also catches separator variants, full-width and zero-width tricks, labelled SSNs, more birth-date
     forms and common credentials (token prefixes, private-key headers, `password=` assignments). Log summaries and
     the titles that become slugs are scrubbed too. It stays a backstop; unlabelled digit runs are left alone on purpose.
+    A `password:`-style label masks its value only if the value contains a digit or is a long mixed-case string:
+    placeholders (`<name>`, `$VAR`, `${VAR}`, `%VAR%`, `[..]`) and identifiers (`from_secret_manager`) are
+    documentation about a secret, so they are left alone (found by scanning the live brains). A long all-lowercase
+    passphrase after such a label is therefore not caught.
   - *Reads:* `wiki_read` takes content and revision from one read; computed lists (role portal, project and session
     task lists) are cut when a read page is written back; frontmatter is split on `\n` only (U+2028 injected keys).
   - *Limits:* queries are capped at 300 characters and 12 fuzzy terms; each silo has a page and a size quota

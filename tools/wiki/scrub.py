@@ -43,6 +43,20 @@ ROLE_LOCALPARTS = frozenset({
 })
 
 
+def _looks_like_secret(value: str) -> bool:
+    """Is the value after a `password:` / `api_key=` style label a secret, or documentation about one?
+
+    A value that starts with `<`, `{`, `$`, `%`, `[` or `(` is a placeholder or a reference to where the secret lives
+    (`<delta_link>`, `$API_KEY`), and an identifier made of letters and underscores (`from_secret_manager`) is a name,
+    not a value: masking those mangled documentation. A secret is a value with a digit in it, or a long mixed-case
+    string. This is a backstop: a long all-lowercase passphrase is not caught."""
+    if not value or value[0] in "<{$%[(":
+        return False
+    if re.search(r"\d", value):
+        return True
+    return len(value) >= 20 and value != value.lower() and value != value.upper()
+
+
 def _luhn(digits: str) -> bool:
     total, flip = 0, False
     for ch in reversed(digits):
@@ -89,7 +103,7 @@ def scrub(text: str, keep_emails: bool = False, keep_phones: bool = False) -> tu
 
     def secret_label(m):
         value = m.group(3)
-        if len(value) < 12 and not re.search(r"\d", value):      # "password: required" is prose, "password=Hunter2" is not
+        if not _looks_like_secret(value):       # prose ("password: required"), identifiers and placeholders stay
             return m.group(0)
         counts["secret"] += 1
         return f"{m.group(1)}{m.group(2)}{{secret}}"
