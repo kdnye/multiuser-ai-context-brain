@@ -33,10 +33,11 @@ def oid(email):
 ANA_HOME = "users/" + oid("ana.ops@example.com")
 
 
-def token(email, roles=()):
+def token(email, roles=(), scp="brain.access"):
     now = int(time.time())
-    return jwt.encode({"iss": f"https://login.microsoftonline.com/{TENANT}/v2.0", "aud": AUD, "tid": TENANT, "oid": oid(email),
-                       "preferred_username": email, "roles": list(roles), "nbf": now - 5, "exp": now + 600}, KEY, algorithm="RS256")
+    claims = {"iss": f"https://login.microsoftonline.com/{TENANT}/v2.0", "aud": AUD, "tid": TENANT, "oid": oid(email),
+              "preferred_username": email, "roles": list(roles), "scp": scp, "nbf": now - 5, "exp": now + 600}
+    return jwt.encode({k: v for k, v in claims.items() if v is not None}, KEY, algorithm="RS256")
 
 
 @pytest.fixture(scope="module")
@@ -77,6 +78,16 @@ def session(client, email, roles=()):
 def call(client, h, name, args):
     msg = rpc(client.post("/mcp", headers=h, json={"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": name, "arguments": args}}))
     return json.loads(msg["result"]["content"][0]["text"])
+
+
+@pytest.mark.parametrize("scp", [None, "other.access", "openid email profile"])
+def test_a_token_for_another_connector_scope_gets_401_from_the_hosted_app(client, scp):
+    # The hosted app requires the scope it advertises (default brain.access): a second connector on the same registration
+    # has the same audience, so a token consented for it must not open the brain.
+    h = {"Authorization": f"Bearer {token('ana.ops@example.com', scp=scp)}"}
+    assert client.post("/mcp", headers=h, json={}).status_code == 401
+    ok = {"Authorization": f"Bearer {token('ana.ops@example.com')}"}
+    assert client.post("/mcp", headers=ok, json={}).status_code != 401
 
 
 def test_unauthenticated_and_foreign_tokens_get_401_and_discovery_is_public(client):

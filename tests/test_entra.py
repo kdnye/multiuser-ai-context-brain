@@ -9,7 +9,13 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from mcp_server.entra import DISCOVERY, EntraGate, EntraValidator, discovery_document
+from mcp_server.entra import (
+    DISCOVERY,
+    EntraGate,
+    EntraValidator,
+    discovery_document,
+    scope_names,
+)
 
 TENANT = "11111111-2222-3333-4444-555555555555"
 AUD = "api://context-brain"
@@ -95,6 +101,82 @@ def test_gate_admits_valid_tokens_and_denies_everything_else_identically(v):
     bodies = {_call(gate, "/mcp", a)[1] for a in (None, "Bearer junk", f"Bearer {token(aud='x')}", "Basic abc")}
     assert len(bodies) == 1 and _call(gate, "/mcp")[0] == 401
     assert _call(gate, DISCOVERY)[0] == 200                           # discovery is public
+
+
+def validator(*scopes):
+    return EntraValidator(TENANT, [AUD], ["example.com"], key_for=lambda t: KEY.public_key(), required_scopes=list(scopes))
+
+
+@pytest.mark.parametrize("scp", ["brain.access", "openid brain.access", "brain.access email profile", "  brain.access  "])
+def test_a_token_with_the_required_scope_is_admitted(scp):
+    assert validator("brain.access").identity(token(scp=scp)) is not None
+
+
+@pytest.mark.parametrize("scp", [
+    None,                              # app-only token or no scope claim at all
+    "",                                # empty
+    "other.access",                    # consented for another connector on the same registration
+    "openid email profile",            # sign-in scopes only
+    "xbrain.access",                   # a longer name that merely ends the same way
+    "brain.access.extra",              # a longer name that merely starts the same way
+    "BRAIN.ACCESS",                    # scope names are case-sensitive
+    ["brain.access"],                  # scp is a space-separated string, never a list
+    {"brain.access": True},
+    42,
+])
+def test_a_token_without_the_required_scope_is_refused(scp):
+    assert validator("brain.access").identity(token(scp=scp)) is None
+
+
+def test_an_app_only_token_with_roles_is_refused_when_a_scope_is_required():
+    # Client-credentials tokens carry `roles` and no `scp`; this server only serves signed-in people.
+    assert validator("brain.access").identity(token(roles=["finance"])) is None
+
+
+def test_two_connectors_on_one_registration_cannot_use_each_others_tokens():
+    brain, other = validator("brain.access"), validator("other.access")
+    brain_token, other_token = token(scp="brain.access"), token(scp="other.access")
+    assert brain.identity(brain_token) is not None and other.identity(other_token) is not None
+    assert brain.identity(other_token) is None      # the other connector's token does not open the brain
+    assert other.identity(brain_token) is None      # and a brain token does not open the other connector
+    both = token(scp="brain.access other.access")   # only if the client was consented for both
+    assert brain.identity(both) is not None and other.identity(both) is not None
+
+
+def test_any_one_of_several_required_scopes_is_enough():
+    two = validator("brain.access", "other.access")
+    assert two.identity(token(scp="other.access")) is not None and two.identity(token(scp="unrelated")) is None
+
+
+@pytest.mark.parametrize("bad", [[], [""], ["  "], ["two words"]])
+def test_an_empty_or_malformed_scope_list_is_a_configuration_error_not_no_restriction(bad):
+    with pytest.raises(ValueError):
+        validator(*bad)
+
+
+def test_without_required_scopes_the_scope_claim_is_not_checked():
+    # The unit-test default only; the hosted server always sets required_scopes (see test_mcp_http).
+    assert EntraValidator(TENANT, [AUD], ["example.com"], key_for=lambda t: KEY.public_key()).identity(token()) is not None
+
+
+def test_gate_gives_the_same_denial_for_a_wrong_scope_as_for_any_other_failure():
+    gate = EntraGate(None, validator("brain.access"), "https://brain.example/.well-known/oauth-protected-resource")
+    assert _call(gate, "/mcp", f"Bearer {token(scp='brain.access')}")[0] == 200
+    wrong = _call(gate, "/mcp", f"Bearer {token(scp='other.access')}")
+    junk = _call(gate, "/mcp", "Bearer junk")
+    assert wrong[0] == 401 and wrong[1] == junk[1]    # nothing says which check failed
+
+
+@pytest.mark.parametrize("advertised,expected", [
+    (["https://brain.example.com/mcp/brain.access"], ["brain.access"]),
+    (["api://context-brain/brain.access"], ["brain.access"]),
+    (["brain.access"], ["brain.access"]),
+    (["https://x/mcp/other.access/"], ["other.access"]),
+    (["a/brain.access", "a/other.access"], ["brain.access", "other.access"]),
+    (["", "  "], []),
+])
+def test_scope_names_are_the_last_segment_of_each_advertised_scope(advertised, expected):
+    assert scope_names(advertised) == expected
 
 
 def test_discovery_points_at_the_tenant():

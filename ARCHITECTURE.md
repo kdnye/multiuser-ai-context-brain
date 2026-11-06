@@ -75,9 +75,12 @@ one JSON line: user id, action, silo, path, allowed. No page content, no email, 
 
 ## Identity (`entra.py`)
 Microsoft identity platform v2 access tokens, RS256 only, signature from the tenant JWKS; `iss` and `tid` must be
-the configured tenant; `aud` must be one of `ENTRA_AUDIENCES`; `exp`/`nbf` with 60 s leeway; `oid` required and a
-GUID; email (`preferred_username`/`email`/`upn`) must be ASCII and on an allowed domain. Every failure is the same
-401 with a `WWW-Authenticate` header pointing at `/.well-known/oauth-protected-resource`. Verified identities are
+the configured tenant; `aud` must be one of `ENTRA_AUDIENCES`; **`scp` must contain one of the scope names this server
+advertises** (`ENTRA_SCOPES`, default `brain.access`; the name is the part after the last `/`), because several
+connectors can share one app registration and then share the same `aud`, so audience alone cannot say which connector
+a token was consented for, and a token with no `scp` (an app-only token) is refused; `exp`/`nbf` with 60 s leeway;
+`oid` required and a GUID; email (`preferred_username`/`email`/`upn`) must be ASCII and on an allowed domain. Every
+failure is the same 401 with a `WWW-Authenticate` header pointing at `/.well-known/oauth-protected-resource`. Verified identities are
 cached until token expiry, keyed by the token's SHA-256, in a bounded cache. The JWKS fetch runs off the event loop.
 
 Local development (stdio only) uses `BRAIN_DEV_EMAIL` / `BRAIN_DEV_ROLES` and derives a stable GUID from the email

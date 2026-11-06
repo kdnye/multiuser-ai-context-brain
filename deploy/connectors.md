@@ -54,6 +54,12 @@ ChatGPT freezes the tool list at publish time, so republish after any tool chang
 - The server does not require the `brain-user` role claim; assignment-required on the enterprise app is what keeps
   unassigned people out. Prove it with an unassigned test account.
 - After a role change, the user reconnects to get a fresh token.
+- **The token's `scp` must contain the scope name from `ENTRA_SCOPES`** (the part after the last `/`, `brain.access`
+  by default). If you named the scope something else, set `ENTRA_SCOPES` to match, or every sign-in is refused. This
+  is also what keeps two connectors on one API registration apart: they share the audience, so give each server its
+  own scope name and its own `ENTRA_SCOPES`. App-only (client-credentials) tokens carry no `scp` and are refused.
+  After upgrading, connect once and call a tool straight away; there is no bypass setting, so roll back to the
+  previous revision if a sign-in that worked before now gets a 401.
 
 ## References
 - MCP authorization spec: https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization

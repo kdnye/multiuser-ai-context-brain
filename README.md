@@ -79,7 +79,7 @@ Every variable the code reads. The hosted service refuses to start if a required
 | `MCP_PUBLIC_URL` | http | yes | The service's public base URL, e.g. `https://brain.example.com` (discovery document, host check) |
 | `ENTRA_TENANT_ID` | http | yes | Your Entra tenant id |
 | `ENTRA_AUDIENCES` | http | yes | Comma list: the API registration's client id and/or its App ID URI |
-| `ENTRA_SCOPES` | http | no | Scopes advertised in discovery. Default `<MCP_PUBLIC_URL>/mcp/brain.access`, the form that works with MCP clients (deploy/connectors.md "Lessons learned") |
+| `ENTRA_SCOPES` | http | no | Scopes advertised in discovery **and enforced**: the access token's `scp` must contain the scope name (the part after the last `/`, so `brain.access`). Default `<MCP_PUBLIC_URL>/mcp/brain.access`, the form that works with MCP clients (deploy/connectors.md "Lessons learned"). If you named your scope differently, set this to match or every sign-in is refused |
 | `ALLOWED_EMAIL_DOMAINS` | http | yes | Comma list of email domains allowed to sign in, e.g. `example.com` |
 | `BRAIN_STORE` | both | http: yes | `file` (default) or `gcs`; http requires `gcs` |
 | `BRAIN_BUCKET` | http | yes | Cloud Storage bucket; silos live under `silos/<silo>/` |

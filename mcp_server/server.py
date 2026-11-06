@@ -286,6 +286,8 @@ def _http_app():
         EntraGate,
         EntraValidator,
         discovery_document,
+        normalise_scopes,
+        scope_names,
     )
 
     public_url = (os.environ.get("MCP_PUBLIC_URL") or "").strip().rstrip("/")
@@ -312,6 +314,10 @@ def _http_app():
     app = mcp.streamable_http_app()
     app.router.routes.append(Route(DISCOVERY, protected_resource))
     validator = EntraValidator(tenant, audiences, domains)
+    # The token must carry a scope this server advertises: a second connector on the same registration has the same
+    # audience, so `aud` alone cannot tell a brain token from a token consented for another connector. Set after
+    # construction, like required_role below, because tests monkeypatch the constructor signature.
+    validator.required_scopes = normalise_scopes(scope_names(scopes))
     required_role = (os.environ.get("BRAIN_REQUIRED_ROLE") or "").strip()
     if required_role:        # optional defence in depth: demand this app role in every token (see README configuration)
         validator.required_role = required_role
