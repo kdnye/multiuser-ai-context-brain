@@ -6,7 +6,11 @@ token is a Microsoft identity platform v2 access token that:
   2. has `iss` == https://login.microsoftonline.com/<tenant>/v2.0 and `tid` == the configured tenant id;
   3. has an `aud` in the configured audiences (this app's client id, or its `api://...` App ID URI);
   4. is inside its `nbf`/`exp` window (small leeway);
-  5. names a user (`oid`) whose email (`preferred_username`, `email` or `upn`) is on an allowed domain.
+  5. names a user (`oid`) whose email (`preferred_username`, `email` or `upn`) is on an allowed domain;
+  6. when `required_scopes` is set (the hosted server always sets it), carries one of those delegated scopes in
+     `scp`. Several connectors can share one app registration, and `aud` is then the same for all of them, so the
+     audience alone does not say which connector a token was consented for. A token with no `scp` (an app-only
+     token) is refused.
 Silo roles come from the token's `roles` claim (Entra app roles), so access is granted in Entra.
 
 Every failure returns the same 401 body with a `WWW-Authenticate` pointing at the discovery document, so a caller
@@ -32,11 +36,32 @@ CACHE_MAX = 1024        # verified-token cache entries; keys derive from caller-
 _DENY = json.dumps({"error": "unauthorized"}).encode()
 
 
+def scope_names(scopes: list[str]) -> list[str]:
+    """The scope names a token's `scp` claim carries, from the scope values this server advertises.
+
+    `scp` holds the bare name (`brain.access`), while the advertised value is a full URI
+    (`https://host/mcp/brain.access` or `api://client/brain.access`), so the name is the part after the last `/`."""
+    return [s.strip().rstrip("/").rsplit("/", 1)[-1] for s in scopes if s and s.strip()]
+
+
+def normalise_scopes(scopes: list[str]) -> frozenset[str]:
+    """The bare scope names to require, or ValueError. An empty list is a configuration mistake, not "no restriction"."""
+    names = {s.strip() for s in scopes if isinstance(s, str) and s.strip()}
+    if not names or any(any(c.isspace() for c in n) for n in names):
+        raise ValueError("required_scopes must be a non-empty list of bare scope names")
+    return frozenset(names)
+
+
 class EntraValidator:
     def __init__(self, tenant_id: str, audiences: list[str], allowed_domains: list[str],
-                 key_for: Callable[[str], object] | None = None, leeway: int = 60, required_role: str | None = None):
+                 key_for: Callable[[str], object] | None = None, leeway: int = 60, required_role: str | None = None,
+                 *, required_scopes: list[str] | None = None):
         if not tenant_id or not audiences or not allowed_domains:
             raise ValueError("tenant_id, audiences and allowed_domains are all required")
+        # None means "do not check scp" and exists for unit tests that build validators directly. The hosted server
+        # sets this attribute after construction (like required_role below), so the constructor call tests
+        # monkeypatch stays unchanged; an empty list is refused rather than treated as None.
+        self.required_scopes: frozenset[str] | None = normalise_scopes(required_scopes) if required_scopes is not None else None
         self.tenant_id = tenant_id
         # Optional defence in depth (BRAIN_REQUIRED_ROLE): demand this app role in the token, so a tenant account that
         # Entra's "Assignment required" setting would have excluded cannot sign in if that setting is ever turned off.
@@ -93,6 +118,10 @@ class EntraValidator:
             return None
         if claims.get("tid") != self.tenant_id:
             return None
+        if self.required_scopes is not None:
+            scp = claims.get("scp")
+            if not isinstance(scp, str) or not self.required_scopes & set(scp.split()):
+                return None
         email = str(claims.get("preferred_username") or claims.get("email") or claims.get("upn") or "").strip().lower()
         if not self._allowed_email(email):
             return None
